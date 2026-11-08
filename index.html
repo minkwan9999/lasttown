@@ -59,7 +59,7 @@ function init() {
 }
 function start() {
   state = 'play'; t = 0; wallet = 20; units = []; coins = []; fx = []; walls = []; poisons = [];
-  player = {x: 300, y: 680, hp: 120, hpMax: 120, form: 'base', formT: 0, dead: 0, face: 1};
+  player = {x: 300, y: 680, hp: 120, hpMax: 120, form: 'base', formT: 0, dead: 0, face: 1, anim: 0, moving: false, sx: 300, sy: 690, payT: 0};
   bases = {alien: {x: 300, y: 800, hp: 500, hpMax: 500, r: 38}, human: {x: 300, y: 100, hp: 900, hpMax: 900, r: 44}};
   turrets = [{x: 195, y: 170, hp: 220, hpMax: 220, cd: 0}, {x: 405, y: 170, hp: 220, hpMax: 220, cd: 0}, {x: 300, y: 215, hp: 260, hpMax: 260, cd: 0}];
   init(); spawnT = 3; surgeT = 40; toast = '지휘관을 움직여 존(점선 칸) 위에 서면 코인이 투입됩니다'; toastT = 6; mergeT = 0; incomeT = 0;
@@ -131,7 +131,7 @@ const rad = e => e.r || (e === player ? 10 : 16);
 function update(dt) {
   t += dt;
   // 코인 자동 수입
-  incomeT += dt; if (incomeT > 1) { incomeT = 0; wallet += 1 + Math.floor(t / 60); }
+  incomeT += dt; if (incomeT > 1) { incomeT = 0; wallet += 1 + Math.floor(t / 60); fx.push({fly: 1, from: bases.alien, to: player, life: .6, max: .6, tier: 0}); }
 
   // 플레이어 이동
   const p = player;
@@ -144,9 +144,13 @@ function update(dt) {
     let sp = p.form === 'ufo' ? 230 : p.form === 'giant' ? 105 : 150;
     p.x = Math.max(15, Math.min(W - 15, p.x + dx / l * sp * dt)); p.y = Math.max(15, Math.min(H - 15, p.y + dy / l * sp * dt));
     if (dx) p.face = dx > 0 ? 1 : -1;
+    p.moving = !!(dx || dy); if (p.moving) p.anim += dt * 12;
     if (p.formT > 0 && (p.formT -= dt) <= 0) p.form = 'base';
     if (p.form === 'giant') for (const e of targetsFor('alien')) if (Math.hypot(e.x - p.x, e.y - p.y) < 75 + rad(e)) hit(e, 55 * dt);
   }
+
+  // 코인 더미가 플레이어 뒤를 따라다님
+  { const s = p.form === 'giant' ? 1.8 : 1, k = Math.min(1, dt * 7); p.sx += (p.x - p.face * 24 * s - p.sx) * k; p.sy += (p.y + 8 - p.sy) * k; }
 
   // 존 처리
   for (const z of zones) {
@@ -172,6 +176,7 @@ function update(dt) {
     if (!ready || wallet <= 0) continue;
     const pay = Math.min(wallet, Math.max(10, cost * 1.4) * dt, cost - z.progress);
     wallet -= pay; z.progress += pay;
+    if ((p.payT -= dt) <= 0) { p.payT = .06; fx.push({fly: 1, from: p, to: z, life: .35, max: .35, tier: wallet >= 1000 ? 3 : wallet >= 100 ? 2 : wallet >= 10 ? 1 : 0}); }
     if (z.progress >= cost - 0.001) {
       z.progress = 0; fx.push({boom: 1, x: z.x, y: z.y, life: .4});
       if (z.costs) { z.level++; z.hp = z.hpMax = 200 + z.level * 80; }
@@ -280,6 +285,49 @@ function drawUnit(u) {
   else { circ(u.x, u.y, u.r, fl ? '#fff' : u.kind === 'tank' ? '#657a4a' : '#4a78c9', '#123'); ctx.fillStyle = '#ccc'; ctx.fillRect(u.x - u.r * .6, u.y - u.r - 2, u.r * 1.2, 3); if (u.kind === 'tank') { ctx.fillStyle = '#333'; ctx.fillRect(u.x - 2, u.y - u.r - 10, 4, 10); } }
   hpbar(u.x, u.y - u.r - 8, u.r * 2, u.hp, u.hpMax, u.team === 'alien' ? '#7f7' : '#f77');
 }
+/* 사람 모양 외계 지휘관 */
+function drawCommander(p, s) {
+  const x = p.x, y = p.y, f = p.face, sw = p.moving ? Math.sin(p.anim) : 0, bob = p.moving ? Math.abs(Math.cos(p.anim)) * 2 * s : 0, giant = p.form === 'giant';
+  const armor = giant ? '#e8742a' : '#8a4bd6', skin = '#8be04a';
+  ctx.fillStyle = '#0005'; ctx.beginPath(); ctx.ellipse(x, y + 17 * s, 11 * s, 4 * s, 0, 0, 6.283); ctx.fill();
+  // 망토
+  ctx.fillStyle = giant ? '#a33' : '#5a2a9a'; ctx.beginPath(); ctx.moveTo(x - f * 4 * s, y - 8 * s - bob); ctx.lineTo(x - f * (15 + sw * 3) * s, y + 14 * s); ctx.lineTo(x - f * 2 * s, y + 10 * s); ctx.fill();
+  // 다리
+  ctx.lineCap = 'round'; ctx.strokeStyle = '#2c2a55'; ctx.lineWidth = 4 * s;
+  for (const d of [-1, 1]) { ctx.beginPath(); ctx.moveTo(x + d * 3 * s, y + 6 * s - bob); ctx.lineTo(x + d * 3 * s + d * sw * 5 * s, y + 16 * s); ctx.stroke(); }
+  // 몸통
+  ctx.fillStyle = armor; ctx.strokeStyle = '#2a1850'; ctx.lineWidth = 1.5 * s; ctx.fillRect(x - 7 * s, y - 8 * s - bob, 14 * s, 15 * s); ctx.strokeRect(x - 7 * s, y - 8 * s - bob, 14 * s, 15 * s);
+  ctx.fillStyle = '#ffd23c'; ctx.fillRect(x - 7 * s, y + 3 * s - bob, 14 * s, 2.5 * s); ctx.fillRect(x - 2 * s, y - 6 * s - bob, 4 * s, 4 * s);
+  // 팔
+  ctx.strokeStyle = skin; ctx.lineWidth = 3.2 * s;
+  for (const d of [-1, 1]) { ctx.beginPath(); ctx.moveTo(x + d * 7.5 * s, y - 6 * s - bob); ctx.lineTo(x + d * 10 * s - d * sw * 3 * s, y + 4 * s - bob + d * sw * 2 * s); ctx.stroke(); }
+  // 머리
+  const hy = y - 17 * s - bob;
+  ctx.strokeStyle = '#2a5a1a'; ctx.lineWidth = 1.5 * s; ctx.fillStyle = skin; ctx.beginPath(); ctx.ellipse(x, hy, 8 * s, 9 * s, 0, 0, 6.283); ctx.fill(); ctx.stroke();
+  ctx.fillStyle = '#111';
+  for (const d of [-1, 1]) { ctx.beginPath(); ctx.ellipse(x + d * 3.6 * s + f * 1 * s, hy + .5 * s, 2.6 * s, 3.8 * s, d * .5, 0, 6.283); ctx.fill(); }
+  ctx.strokeStyle = '#2a5a1a'; ctx.lineWidth = 1.2 * s; ctx.beginPath(); ctx.moveTo(x - 2 * s + f * s, hy + 6 * s); ctx.lineTo(x + 2 * s + f * s, hy + 6 * s); ctx.stroke();
+  // 왕관
+  ctx.fillStyle = '#ffd23c'; ctx.strokeStyle = '#a77a00'; ctx.lineWidth = 1 * s; ctx.beginPath();
+  ctx.moveTo(x - 6 * s, hy - 7 * s); ctx.lineTo(x - 7 * s, hy - 14 * s); ctx.lineTo(x - 3 * s, hy - 10 * s); ctx.lineTo(x, hy - 16 * s); ctx.lineTo(x + 3 * s, hy - 10 * s); ctx.lineTo(x + 7 * s, hy - 14 * s); ctx.lineTo(x + 6 * s, hy - 7 * s); ctx.closePath(); ctx.fill(); ctx.stroke();
+}
+/* 보유 코인이 단위별 더미로 쌓여 보임: 1의 자리, 10의 자리, 100의 자리, 1000의 자리 */
+function drawStack(p, s) {
+  const w = Math.floor(wallet), cnt = [w % 10, Math.floor(w / 10) % 10, Math.floor(w / 100) % 10, Math.min(9, Math.floor(w / 1000))];
+  const bx = p.sx, by = p.sy + 16 * s, sway = p.moving ? Math.sin(p.anim) : 0, sc = s > 1 ? 1.4 : 1;
+  let top = by;
+  for (let i = 0; i < 4; i++) {
+    const cx = bx + (i - 1.5) * 12 * sc, th = (i === 3 ? 5 : 4) * sc, rx = (4.5 + i * .7) * sc;
+    for (let k = 0; k < cnt[i]; k++) {
+      const yy = by - k * th, xx = cx + sway * k * .35;
+      ctx.fillStyle = TIER_COL[i]; ctx.strokeStyle = '#0006'; ctx.lineWidth = 1;
+      if (i === 3) { ctx.shadowColor = TIER_COL[3]; ctx.shadowBlur = 8; }
+      ctx.beginPath(); ctx.ellipse(xx, yy, rx, rx * .5, 0, 0, 6.283); ctx.fill(); ctx.stroke(); ctx.shadowBlur = 0;
+      top = Math.min(top, yy);
+    }
+  }
+  if (w >= 10) txt(w.toLocaleString(), bx, top - 8 * sc, 11 * sc, TIER_COL[w >= 1000 ? 3 : w >= 100 ? 2 : 1]);
+}
 function draw() {
   ctx.fillStyle = '#2f6b3a'; ctx.fillRect(0, 0, W, H);
   ctx.fillStyle = '#26592f'; for (const r of rocks) { ctx.beginPath(); ctx.arc(r.x, r.y, r.s, 0, 6.283); ctx.fill(); }
@@ -304,11 +352,12 @@ function draw() {
     const s = p.form === 'giant' ? 2.1 : 1;
     if (p.form === 'giant') { ctx.globalAlpha = .25; circ(p.x, p.y, 75, '#f96'); ctx.globalAlpha = 1; }
     if (p.form === 'ufo') { ctx.fillStyle = '#0004'; ctx.beginPath(); ctx.ellipse(p.x, p.y + 22, 20, 6, 0, 0, 6.283); ctx.fill(); ctx.fillStyle = '#9cf'; ctx.beginPath(); ctx.ellipse(p.x, p.y - 4, 22, 8, 0, 0, 6.283); ctx.fill(); circ(p.x, p.y - 10, 9, '#cff', '#369'); }
-    else { circ(p.x, p.y, 11 * s, p.form === 'giant' ? '#e84' : '#b46cff', '#fff'); circ(p.x - 4 * s, p.y - 2 * s, 2.5 * s, '#000'); circ(p.x + 4 * s, p.y - 2 * s, 2.5 * s, '#000'); ctx.fillStyle = '#ffd23c'; ctx.beginPath(); ctx.moveTo(p.x - 7 * s, p.y - 9 * s); ctx.lineTo(p.x - 4 * s, p.y - 17 * s); ctx.lineTo(p.x, p.y - 10 * s); ctx.lineTo(p.x + 4 * s, p.y - 17 * s); ctx.lineTo(p.x + 7 * s, p.y - 9 * s); ctx.fill(); }
-    hpbar(p.x, p.y + 14 * (p.form === 'giant' ? 2 : 1), 34, p.hp, p.hpMax, '#c8f');
-    if (p.formT > 0) txt(Math.ceil(p.formT) + 's', p.x, p.y - 30 * (p.form === 'giant' ? 1.6 : 1), 12, '#ff8');
+    else { drawStack(p, s); drawCommander(p, s); }
+    if (p.form === 'ufo') drawStack(p, 1);
+    hpbar(p.x, p.y + 20 * s, 34, p.hp, p.hpMax, '#c8f');
+    if (p.formT > 0) txt(Math.ceil(p.formT) + 's', p.x, p.y - 34 * s, 12, '#ff8');
   }
-  for (const f of fx) { if (f.boom) { ctx.globalAlpha = f.life * 2; circ(f.x, f.y, 26 * (1 - f.life), '#ffd27a'); ctx.globalAlpha = 1; } else { ctx.strokeStyle = f.col; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(f.x1, f.y1); ctx.lineTo(f.x2, f.y2); ctx.stroke(); } }
+  for (const f of fx) { if (f.fly) { const q = 1 - f.life / f.max, a = f.from, b = f.to; circ(a.x + (b.x - a.x) * q, a.y + (b.y - a.y) * q - Math.sin(q * Math.PI) * 24 - 6, 2.5 + f.tier * .6, TIER_COL[f.tier], '#0006'); } else if (f.boom) { ctx.globalAlpha = f.life * 2; circ(f.x, f.y, 26 * (1 - f.life), '#ffd27a'); ctx.globalAlpha = 1; } else { ctx.strokeStyle = f.col; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(f.x1, f.y1); ctx.lineTo(f.x2, f.y2); ctx.stroke(); } }
 
   // HUD
   ctx.fillStyle = '#000a'; ctx.fillRect(0, 0, W, 46);
