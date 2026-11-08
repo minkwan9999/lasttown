@@ -59,11 +59,11 @@ function init() {
   zones.forEach(z => { if (z.kind === 'tower' || z.kind === 'barracks') z.hpMax = 200; });
 }
 function start() {
-  state = 'play'; t = 0; wallet = 20; units = []; coins = []; fx = []; walls = []; poisons = [];
+  state = 'play'; t = 0; wallet = 40; units = []; coins = []; fx = []; walls = []; poisons = [];
   player = {x: 300, y: 680, hp: 120, hpMax: 120, form: 'base', formT: 0, dead: 0, face: 1, anim: 0, moving: false, sx: 300, sy: 690, payT: 0};
   bases = {alien: {x: 300, y: 800, hp: 500, hpMax: 500, r: 38}, human: {x: 300, y: 100, hp: 900, hpMax: 900, r: 44}};
   turrets = [{x: 195, y: 170, hp: 220, hpMax: 220, cd: 0}, {x: 405, y: 170, hp: 220, hpMax: 220, cd: 0}, {x: 300, y: 215, hp: 260, hpMax: 260, cd: 0}];
-  init(); spawnT = 3; surgeT = 40; toast = '지휘관을 움직여 존(점선 칸) 위에 서면 코인이 투입됩니다'; toastT = 6; mergeT = 0; incomeT = 0;
+  init(); spawnT = 8; surgeT = 55; toast = '지휘관을 움직여 존(점선 칸) 위에 서면 코인이 투입됩니다'; toastT = 6; mergeT = 0; incomeT = 0;
 }
 
 /* ---------- 길찾기 ---------- */
@@ -86,10 +86,10 @@ function nextHop(from, goal, u) {
 
 /* ---------- 유닛 ---------- */
 const TYPES = {
-  grunt: {hp: 40, dmg: 6, range: 22, spd: 42, cd: 0.7, r: 7, drop: 0},
+  grunt: {hp: 50, dmg: 7, range: 22, spd: 42, cd: 0.7, r: 7, drop: 0},
   fusion: {hp: 420, dmg: 26, range: 34, spd: 34, cd: 0.8, r: 13, drop: 0},
-  soldier: {hp: 36, dmg: 5, range: 60, spd: 38, cd: 0.8, r: 7, drop: 3},
-  tank: {hp: 170, dmg: 16, range: 90, spd: 30, cd: 1.3, r: 12, drop: 25},
+  soldier: {hp: 30, dmg: 4, range: 60, spd: 38, cd: 0.8, r: 7, drop: 3},
+  tank: {hp: 140, dmg: 12, range: 90, spd: 30, cd: 1.3, r: 12, drop: 25},
 };
 function spawnUnit(team, kind, lane, mult = 1) {
   const T = TYPES[kind], from = team === 'alien' ? 'A' : 'H', goal = team === 'alien' ? 'H' : 'A';
@@ -148,6 +148,12 @@ function update(dt) {
     if (dx) p.face = dx > 0 ? 1 : -1;
     p.moving = !!(dx || dy); if (p.moving) p.anim += dt * 12;
     if (p.formT > 0 && (p.formT -= dt) <= 0) p.form = 'base';
+    p.atkT = (p.atkT || 0) - dt;
+    if (p.form !== 'giant' && p.atkT <= 0) {
+      let best = null, bd = p.form === 'ufo' ? 140 : 115;
+      for (const e of targetsFor('alien')) { if (e.hp <= 0) continue; const d = Math.hypot(e.x - p.x, e.y - p.y) - rad(e) * .5; if (d < bd) { bd = d; best = e; } }
+      if (best) { hit(best, p.form === 'ufo' ? 11 : 8); beam(p, best, '#e6a8ff'); p.atkT = .45; }
+    }
     if (p.form === 'giant') for (const e of targetsFor('alien')) if (Math.hypot(e.x - p.x, e.y - p.y) < 75 + rad(e)) hit(e, 55 * dt);
   }
 
@@ -202,13 +208,13 @@ function update(dt) {
 
   // 인간 스폰
   spawnT -= dt; surgeT -= dt;
-  if (spawnT <= 0) { spawnT = Math.max(1.3, 3.4 - t / 90); spawnUnit('human', t > 70 && Math.random() < Math.min(.4, (t - 70) / 300) ? 'tank' : 'soldier', 'A', 1 + t / 400); }
-  if (surgeT <= 0) { surgeT = 40; const side = Math.random() < .5 ? 'L' : 'R'; toast = '지구군 반격 웨이브! (' + (side === 'L' ? '왼쪽' : '오른쪽') + ' 길)'; toastT = 4;
-    for (let i = 0; i < 6 + Math.floor(t / 40); i++) { spawnUnit('human', i % 4 === 3 ? 'tank' : 'soldier', 'A', 1 + t / 400); units[units.length - 1].lane = side; } }
+  if (spawnT <= 0) { spawnT = Math.max(1.8, 5.2 - t / 100); spawnUnit('human', t > 70 && Math.random() < Math.min(.4, (t - 70) / 300) ? 'tank' : 'soldier', 'A', 1 + t / 600); }
+  if (surgeT <= 0) { surgeT = 55; const side = Math.random() < .5 ? 'L' : 'R'; toast = '지구군 반격 웨이브! (' + (side === 'L' ? '왼쪽' : '오른쪽') + ' 길)'; toastT = 4;
+    for (let i = 0; i < 5 + Math.floor(t / 60); i++) { spawnUnit('human', i % 4 === 3 ? 'tank' : 'soldier', 'A', 1 + t / 600); units[units.length - 1].lane = side; } }
 
   // 인간 포탑
   for (const tu of turrets) if (tu.hp > 0) { tu.cd -= dt; if (tu.cd <= 0) { let best = null, bd = 120; for (const u of units) if (u.team === 'alien') { const d = Math.hypot(u.x - tu.x, u.y - tu.y); if (d < bd) { bd = d; best = u; } }
-    if (p.dead <= 0 && Math.hypot(p.x - tu.x, p.y - tu.y) < bd) best = p; if (best) { hit(best, 10); beam(tu, best, '#ffb86b'); tu.cd = .8; } } }
+    if (p.dead <= 0 && Math.hypot(p.x - tu.x, p.y - tu.y) < bd) best = p; if (best) { hit(best, 7); beam(tu, best, '#ffb86b'); tu.cd = .8; } } }
 
   // 유닛
   const pois = poisons;
