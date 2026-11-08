@@ -185,7 +185,7 @@ function update(dt) {
         if (best) { hit(best, 8 + z.level * 5); beam(z, best, '#d9a8ff'); z.t = 0.55; } }
     }
     // 코인 투입
-    if (p.dead > 0 || Math.hypot(p.x - z.x, p.y - z.y) > 40) { z.paying = false; continue; }
+    if (p.dead > 0 || !inZone(p, z)) { z.paying = false; continue; }
     let cost = z.cost, ready = z.cd <= 0;
     if (z.costs) { if (z.level >= 3) { z.paying = false; continue; } cost = z.costs[z.level]; }
     if (z.kind === 'fuse') { const near = units.filter(u => u.team === 'alien' && u.kind === 'grunt' && Math.hypot(u.x - z.x, u.y - z.y) < 230); z.near = near.length; if (near.length < 4) ready = false; z.pick = near; }
@@ -288,25 +288,28 @@ function drawCoin(c) {
   else { ctx.shadowColor = TIER_COL[3]; ctx.shadowBlur = 18; circ(c.x, c.y, 13 * s, TIER_COL[3], '#fff'); ctx.shadowBlur = 0; circ(c.x - 4, c.y - 4, 4, '#fff9'); }
 }
 const ZINFO = {barracks: ['병영', '#9dff7a'], tower: ['타워', '#d9a8ff'], wall: ['봉쇄', '#7fd'], poison: ['오염', '#8f3'], giant: ['거대화', '#f96'], ufo: ['UFO', '#6cf'], fuse: ['합체', '#f7c'], heal: ['회복', '#6f9']};
+const ZH = 16; // 존 반폭(칸 크기 32x32): 그려진 칸과 투입 판정 범위가 동일
+const inZone = (p, z) => Math.abs(p.x - z.x) <= ZH && Math.abs(p.y - z.y) <= ZH;
 function drawZone(z) {
   const [name, col] = ZINFO[z.kind]; const cost = z.costs ? (z.level >= 3 ? null : z.costs[z.level]) : z.cost;
   ctx.save(); ctx.translate(z.x, z.y);
-  ctx.fillStyle = z.paying ? '#ffffff55' : '#00000033'; ctx.fillRect(-32, -32, 64, 64);
-  ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.setLineDash([7, 5]); ctx.strokeRect(-32, -32, 64, 64); ctx.setLineDash([]);
-  if (cost) { ctx.fillStyle = col + '99'; ctx.fillRect(-32, 32 - 64 * (z.progress / cost), 64, 64 * (z.progress / cost)); }
+  ctx.fillStyle = z.paying ? '#ffffff55' : '#00000033'; ctx.fillRect(-ZH, -ZH, ZH * 2, ZH * 2);
+  ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.setLineDash([5, 3]); ctx.strokeRect(-ZH, -ZH, ZH * 2, ZH * 2); ctx.setLineDash([]);
+  if (cost) { ctx.fillStyle = col + '99'; ctx.fillRect(-ZH, ZH - ZH * 2 * (z.progress / cost), ZH * 2, ZH * 2 * (z.progress / cost)); }
+  ctx.scale(.5, .5);
   if (z.kind === 'tower' && z.level > 0) { ctx.fillStyle = '#777'; ctx.fillRect(-10, -18, 20, 28); ctx.fillStyle = '#a5f'; ctx.fillRect(-14, -24, 28, 8); }
   if (z.kind === 'barracks' && z.level > 0) { ctx.fillStyle = '#3a6'; ctx.beginPath(); ctx.arc(0, 0, 18, Math.PI, 0); ctx.fill(); ctx.fillRect(-18, 0, 36, 8); }
   ctx.restore();
   const lv = z.costs && z.level > 0 ? ' Lv' + z.level : '';
-  txt(name + lv + (z.lane ? ({L: '·좌', R: '·우', A: '·중'})[z.lane] : ''), z.x, z.y - 38, 12, col);
-  const cdTxt = z.cd > 0 ? Math.ceil(z.cd) + 's' : null;
-  if (z.kind === 'heal' && !cdTxt && Math.hypot(player.x - z.x, player.y - z.y) < 40 && player.hp >= player.hpMax * .99) txt('체력 가득', z.x, z.y + 4, 12, '#bfb');
-  else if (z.kind === 'fuse' && z.near !== undefined && Math.hypot(player.x - z.x, player.y - z.y) < 40 && z.near < 4) txt('유닛 4기 필요', z.x, z.y + 4, 11, '#fbb');
-  else if (cdTxt) txt(cdTxt, z.x, z.y + 5, 14, '#ccc');
-  else if (cost) { txt(cost, z.x - 8, z.y + 6, 16, '#ffe27a'); circ(z.x + 14, z.y + 1, 5, TIER_COL[0]); }
-  else txt('MAX', z.x, z.y + 5, 14, '#ccc');
-  if (z.kind === 'heal') { ctx.fillStyle = '#6f9'; ctx.fillRect(z.x - 3, z.y - 17, 6, 14); ctx.fillRect(z.x - 7, z.y - 13, 14, 6); }
-  if (z.hpMax && z.level > 0) hpbar(z.x, z.y + 36, 40, z.hp, z.hpMax);
+  txt(name + lv + (z.lane ? ({L: '·좌', R: '·우', A: '·중'})[z.lane] : ''), z.x, z.y - ZH - 5, 11, col);
+  const cdTxt = z.cd > 0 ? Math.ceil(z.cd) + 's' : null, by = z.y + ZH + 14, near = inZone(player, z);
+  if (z.kind === 'heal' && !cdTxt && near && player.hp >= player.hpMax * .99) txt('체력 가득', z.x, by, 11, '#bfb');
+  else if (z.kind === 'fuse' && z.near !== undefined && near && z.near < 4) txt('유닛 4기 필요', z.x, by, 10, '#fbb');
+  else if (cdTxt) txt(cdTxt, z.x, by, 12, '#ccc');
+  else if (cost) { txt(cost, z.x - 6, by, 12, '#ffe27a'); circ(z.x + 10, by - 4, 4, TIER_COL[0]); }
+  else txt('MAX', z.x, by, 12, '#ccc');
+  if (z.kind === 'heal') { ctx.fillStyle = '#6f9'; ctx.fillRect(z.x - 1.5, z.y - 7, 3, 14); ctx.fillRect(z.x - 7, z.y - 1.5, 14, 3); }
+  if (z.hpMax && z.level > 0) hpbar(z.x, z.y + ZH + 20, 32, z.hp, z.hpMax);
 }
 function drawUnit(u) {
   const fl = u.flash > 0;
