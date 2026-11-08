@@ -2,187 +2,333 @@
 <html lang="ko">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Last Town - 마지막 마을</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Last Town - 외계 침공</title>
 <style>
-  html,body{margin:0;height:100%;background:#111;color:#eee;font-family:sans-serif;overflow:hidden}
+  html,body{margin:0;height:100%;background:#0b0b14;overflow:hidden;font-family:sans-serif}
   #wrap{display:flex;align-items:center;justify-content:center;height:100%}
-  canvas{background:#2d4a2b;max-width:100%;max-height:100%;touch-action:none}
+  canvas{height:100%;max-width:100%;aspect-ratio:600/900;touch-action:none;background:#2f6b3a}
 </style>
 </head>
 <body>
-<div id="wrap"><canvas id="c" width="800" height="600"></canvas></div>
+<div id="wrap"><canvas id="c" width="600" height="900"></canvas></div>
 <script>
 const cv = document.getElementById('c'), ctx = cv.getContext('2d');
-const W = cv.width, H = cv.height;
-const keys = {}; let mouse = {x: W/2, y: H/2, down: false};
-addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; if (e.key === ' ') e.preventDefault(); });
+const W = 600, H = 900;
+
+/* ---------- 입력 ---------- */
+const keys = {}; const ptr = {x: 0, y: 0, down: false};
+addEventListener('keydown', e => { keys[e.key.toLowerCase()] = true; if (e.key === 'Enter' && state !== 'play') start(); if (e.key.startsWith('Arrow') || e.key === ' ') e.preventDefault(); });
 addEventListener('keyup', e => keys[e.key.toLowerCase()] = false);
-function pos(e){ const r = cv.getBoundingClientRect(); const t = e.touches ? e.touches[0] : e;
-  mouse.x = (t.clientX - r.left) * W / r.width; mouse.y = (t.clientY - r.top) * H / r.height; }
-cv.addEventListener('mousemove', pos);
-cv.addEventListener('mousedown', e => { pos(e); mouse.down = true; if (state !== 'play') start(); });
-addEventListener('mouseup', () => mouse.down = false);
-cv.addEventListener('touchstart', e => { pos(e); mouse.down = true; if (state !== 'play') start(); e.preventDefault(); }, {passive:false});
-cv.addEventListener('touchmove', e => { pos(e); e.preventDefault(); }, {passive:false});
-cv.addEventListener('touchend', () => mouse.down = false);
-addEventListener('keydown', e => { if (e.key === 'Enter' && state !== 'play') start(); });
+function setPtr(e) { const r = cv.getBoundingClientRect(); const t = e.touches ? e.touches[0] : e; ptr.x = (t.clientX - r.left) * W / r.width; ptr.y = (t.clientY - r.top) * H / r.height; }
+cv.addEventListener('mousedown', e => { setPtr(e); ptr.down = true; if (state !== 'play') start(); });
+cv.addEventListener('mousemove', e => { if (ptr.down) setPtr(e); });
+addEventListener('mouseup', () => ptr.down = false);
+cv.addEventListener('touchstart', e => { setPtr(e); ptr.down = true; if (state !== 'play') start(); e.preventDefault(); }, {passive: false});
+cv.addEventListener('touchmove', e => { setPtr(e); e.preventDefault(); }, {passive: false});
+cv.addEventListener('touchend', () => ptr.down = false);
 
-let state = 'menu', player, zombies, bullets, pickups, particles, wave, score, town, spawnLeft, spawnTimer, best = +localStorage.lasttownBest || 0;
-const TOWN = {x: W/2, y: H/2, r: 40};
+/* ---------- 맵(길 그래프) ---------- */
+const NODE = {A: [300, 800], L1: [120, 680], L2: [120, 450], L3: [120, 230], R1: [480, 680], R2: [480, 450], R3: [480, 230], X: [300, 450], H: [300, 100]};
+const EDGES = [['A','L1','L'],['L1','L2','L'],['L2','L3','L'],['L3','H','L'],['A','R1','R'],['R1','R2','R'],['R2','R3','R'],['R3','H','R'],['L2','X','C'],['X','R2','C']];
+const ADJ = {}; EDGES.forEach((e, i) => { (ADJ[e[0]] ||= []).push([e[1], i]); (ADJ[e[1]] ||= []).push([e[0], i]); });
+const elen = i => Math.hypot(NODE[EDGES[i][0]][0] - NODE[EDGES[i][1]][0], NODE[EDGES[i][0]][1] - NODE[EDGES[i][1]][1]);
+function edgePoint(i, t) { const a = NODE[EDGES[i][0]], b = NODE[EDGES[i][1]]; return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]; }
 
+/* ---------- 동전 단위 ---------- */
+const TIER_VAL = [1, 10, 100, 1000];
+const TIER_COL = ['#ffd23c', '#4cf08a', '#4cb6ff', '#c26bff'];
+
+/* ---------- 상태 ---------- */
+let state = 'menu', t, wallet, player, units, coins, fx, walls, poisons, zones, bases, turrets, spawnT, surgeT, toast, toastT, mergeT, incomeT;
+
+function mkZone(kind, x, y, extra) { return Object.assign({kind, x, y, level: 0, progress: 0, cd: 0, hp: 0, spawnT: 0, t: 0}, extra); }
+function init() {
+  zones = [
+    mkZone('barracks', 170, 765, {lane: 'L', costs: [20, 40, 70]}),
+    mkZone('barracks', 300, 725, {lane: 'A', costs: [25, 45, 80]}),
+    mkZone('barracks', 430, 765, {lane: 'R', costs: [20, 40, 70]}),
+    mkZone('tower', 185, 620, {costs: [15, 30, 55]}), mkZone('tower', 415, 620, {costs: [15, 30, 55]}),
+    mkZone('tower', 185, 340, {costs: [25, 45, 80]}), mkZone('tower', 415, 340, {costs: [25, 45, 80]}),
+    mkZone('wall', 60, 540, {cost: 25, cdMax: 25, edge: 1, at: 0.5}), mkZone('wall', 540, 540, {cost: 25, cdMax: 25, edge: 5, at: 0.5}),
+    mkZone('poison', 60, 330, {cost: 30, cdMax: 30, edge: 2, at: 0.5}), mkZone('poison', 540, 330, {cost: 30, cdMax: 30, edge: 6, at: 0.5}),
+    mkZone('giant', 235, 500, {cost: 40, cdMax: 10}), mkZone('ufo', 365, 500, {cost: 40, cdMax: 10}),
+    mkZone('fuse', 300, 610, {cost: 40, cdMax: 2}),
+  ];
+  zones.forEach(z => { if (z.kind === 'tower' || z.kind === 'barracks') z.hpMax = 200; });
+}
 function start() {
-  state = 'play'; score = 0; wave = 0; town = {hp: 100};
-  player = {x: W/2, y: H/2 + 80, hp: 100, speed: 3, cd: 0, ammo: 30, reload: 0, weapon: 0};
-  zombies = []; bullets = []; pickups = []; particles = [];
-  nextWave();
-}
-function nextWave() { wave++; spawnLeft = 5 + wave * 3; spawnTimer = 0; }
-
-function spawnZombie() {
-  const side = Math.floor(Math.random() * 4); let x, y;
-  if (side === 0) { x = Math.random() * W; y = -20; }
-  else if (side === 1) { x = W + 20; y = Math.random() * H; }
-  else if (side === 2) { x = Math.random() * W; y = H + 20; }
-  else { x = -20; y = Math.random() * H; }
-  const big = Math.random() < Math.min(0.05 + wave * 0.02, 0.25);
-  zombies.push({x, y, hp: big ? 6 : 2 + Math.floor(wave / 4), r: big ? 16 : 11, speed: (big ? 0.7 : 1 + Math.random() * 0.5) + wave * 0.04, big, hitCd: 0});
+  state = 'play'; t = 0; wallet = 20; units = []; coins = []; fx = []; walls = []; poisons = [];
+  player = {x: 300, y: 680, hp: 120, hpMax: 120, form: 'base', formT: 0, dead: 0, face: 1};
+  bases = {alien: {x: 300, y: 800, hp: 500, hpMax: 500, r: 38}, human: {x: 300, y: 100, hp: 900, hpMax: 900, r: 44}};
+  turrets = [{x: 195, y: 170, hp: 220, hpMax: 220, cd: 0}, {x: 405, y: 170, hp: 220, hpMax: 220, cd: 0}, {x: 300, y: 215, hp: 260, hpMax: 260, cd: 0}];
+  init(); spawnT = 3; surgeT = 40; toast = '지휘관을 움직여 존(점선 칸) 위에 서면 코인이 투입됩니다'; toastT = 6; mergeT = 0; incomeT = 0;
 }
 
-function burst(x, y, color, n = 6) {
-  for (let i = 0; i < n; i++) { const a = Math.random() * 6.28, s = 1 + Math.random() * 3;
-    particles.push({x, y, vx: Math.cos(a) * s, vy: Math.sin(a) * s, life: 20 + Math.random() * 15, color}); }
+/* ---------- 길찾기 ---------- */
+function edgeCost(i, u) {
+  let c = elen(i) * (1 + u.noise[i]);
+  if (u.team === 'alien') { if (u.lane === 'L' && EDGES[i][2] === 'R') c *= 6; if (u.lane === 'R' && EDGES[i][2] === 'L') c *= 6; }
+  else for (const w of walls) if (w.edge === i) c += 700;
+  return c;
 }
-
-function shoot() {
-  if (player.cd > 0 || player.reload > 0) return;
-  if (player.ammo <= 0) { player.reload = 70; return; }
-  const a = Math.atan2(mouse.y - player.y, mouse.x - player.x);
-  const shots = player.weapon === 1 ? [-0.2, 0, 0.2] : [0];
-  for (const o of shots) {
-    const aa = a + o + (Math.random() - 0.5) * 0.06;
-    bullets.push({x: player.x, y: player.y, vx: Math.cos(aa) * 10, vy: Math.sin(aa) * 10, life: 60});
+function nextHop(from, goal, u) {
+  const dist = {[from]: 0}, prev = {}, q = [from], done = {};
+  while (q.length) {
+    q.sort((a, b) => dist[a] - dist[b]); const n = q.shift(); if (done[n]) continue; done[n] = 1; if (n === goal) break;
+    for (const [m, ei] of ADJ[n]) { const d = dist[n] + edgeCost(ei, u); if (dist[m] === undefined || d < dist[m]) { dist[m] = d; prev[m] = n; q.push(m); } }
   }
-  player.ammo--; player.cd = player.weapon === 1 ? 22 : 8;
+  let n = goal; if (prev[n] === undefined) return from;
+  while (prev[n] !== from) n = prev[n];
+  return n;
 }
 
-function update() {
+/* ---------- 유닛 ---------- */
+const TYPES = {
+  grunt: {hp: 40, dmg: 6, range: 22, spd: 42, cd: 0.7, r: 7, drop: 0},
+  fusion: {hp: 420, dmg: 26, range: 34, spd: 34, cd: 0.8, r: 13, drop: 0},
+  soldier: {hp: 36, dmg: 5, range: 60, spd: 38, cd: 0.8, r: 7, drop: 3},
+  tank: {hp: 170, dmg: 16, range: 90, spd: 30, cd: 1.3, r: 12, drop: 25},
+};
+function spawnUnit(team, kind, lane, mult = 1) {
+  const T = TYPES[kind], from = team === 'alien' ? 'A' : 'H', goal = team === 'alien' ? 'H' : 'A';
+  const u = {team, kind, x: NODE[from][0] + (Math.random() - .5) * 30, y: NODE[from][1] + (team === 'alien' ? -40 : 40) + (Math.random() - .5) * 10,
+    hp: T.hp * mult, hpMax: T.hp * mult, dmg: T.dmg * mult, range: T.range, spd: T.spd, cd: Math.random() * .5, r: T.r, drop: T.drop,
+    lane, goal, at: from, ox: (Math.random() - .5) * 18, oy: (Math.random() - .5) * 18, noise: EDGES.map(() => Math.random() * .35)};
+  if (team === 'human') u.lane = Math.random() < .5 ? 'L' : 'R';
+  u.next = nextHop(from, goal, u); units.push(u);
+}
+function dropCoins(x, y, v) {
+  for (let ti = 3; ti >= 0; ti--) { const n = Math.floor(v / TIER_VAL[ti]); v -= n * TIER_VAL[ti]; for (let i = 0; i < Math.min(n, 12); i++) coins.push({x, y, vx: (Math.random() - .5) * 90, vy: (Math.random() - .5) * 90, tier: ti}); }
+}
+function mergeCoins() {
+  for (let ti = 0; ti < 3; ti++) {
+    const b = {};
+    for (const c of coins) if (c.tier === ti) (b[Math.floor(c.x / 60) + ',' + Math.floor(c.y / 60)] ||= []).push(c);
+    for (const k in b) while (b[k].length >= 10) {
+      const g = b[k].splice(0, 10); let x = 0, y = 0; g.forEach(c => { x += c.x; y += c.y; c.dead = 1; });
+      coins.push({x: x / 10, y: y / 10, vx: 0, vy: 0, tier: ti + 1, pop: 0.4});
+    }
+  }
+  coins = coins.filter(c => !c.dead);
+}
+
+function hit(e, dmg) { e.hp -= dmg; e.flash = 0.1; }
+function beam(a, b, col) { fx.push({x1: a.x, y1: a.y, x2: b.x, y2: b.y, life: 0.12, col}); }
+function targetsFor(team) {
+  const res = [];
+  if (team === 'alien') { for (const u of units) if (u.team === 'human') res.push(u); for (const tu of turrets) if (tu.hp > 0) res.push(tu); res.push(bases.human); }
+  else {
+    for (const u of units) if (u.team === 'alien') res.push(u);
+    for (const z of zones) if ((z.kind === 'tower' || z.kind === 'barracks') && z.level > 0) res.push(z);
+    for (const w of walls) res.push(w); if (player.dead <= 0) res.push(player); res.push(bases.alien);
+  }
+  return res;
+}
+const rad = e => e.r || (e === player ? 10 : 16);
+
+/* ---------- 업데이트 ---------- */
+function update(dt) {
+  t += dt;
+  // 코인 자동 수입
+  incomeT += dt; if (incomeT > 1) { incomeT = 0; wallet += 1 + Math.floor(t / 60); }
+
+  // 플레이어 이동
   const p = player;
-  let dx = (keys['d'] || keys['arrowright'] ? 1 : 0) - (keys['a'] || keys['arrowleft'] ? 1 : 0);
-  let dy = (keys['s'] || keys['arrowdown'] ? 1 : 0) - (keys['w'] || keys['arrowup'] ? 1 : 0);
-  if (dx || dy) { const l = Math.hypot(dx, dy); p.x += dx / l * p.speed; p.y += dy / l * p.speed; }
-  p.x = Math.max(10, Math.min(W - 10, p.x)); p.y = Math.max(10, Math.min(H - 10, p.y));
-  if (p.cd > 0) p.cd--;
-  if (keys['r'] && p.reload <= 0 && p.ammo < 30) p.reload = 70;
-  if (p.reload > 0 && --p.reload === 0) p.ammo = 30;
-  if (mouse.down || keys[' ']) shoot();
+  if (p.dead > 0) { p.dead -= dt; if (p.dead <= 0) { p.hp = p.hpMax; p.x = 300; p.y = 700; p.form = 'base'; } }
+  else {
+    let dx = (keys['d'] || keys['arrowright'] ? 1 : 0) - (keys['a'] || keys['arrowleft'] ? 1 : 0);
+    let dy = (keys['s'] || keys['arrowdown'] ? 1 : 0) - (keys['w'] || keys['arrowup'] ? 1 : 0);
+    if (!dx && !dy && ptr.down) { const vx = ptr.x - p.x, vy = ptr.y - p.y, l = Math.hypot(vx, vy); if (l > 8) { dx = vx / l; dy = vy / l; } }
+    const l = Math.hypot(dx, dy) || 1;
+    let sp = p.form === 'ufo' ? 230 : p.form === 'giant' ? 105 : 150;
+    p.x = Math.max(15, Math.min(W - 15, p.x + dx / l * sp * dt)); p.y = Math.max(15, Math.min(H - 15, p.y + dy / l * sp * dt));
+    if (dx) p.face = dx > 0 ? 1 : -1;
+    if (p.formT > 0 && (p.formT -= dt) <= 0) p.form = 'base';
+    if (p.form === 'giant') for (const e of targetsFor('alien')) if (Math.hypot(e.x - p.x, e.y - p.y) < 75 + rad(e)) hit(e, 55 * dt);
+  }
 
-  if (spawnLeft > 0 && --spawnTimer <= 0) { spawnZombie(); spawnLeft--; spawnTimer = Math.max(15, 60 - wave * 3); }
-
-  for (const b of bullets) { b.x += b.vx; b.y += b.vy; b.life--; }
-  bullets = bullets.filter(b => b.life > 0 && b.x > 0 && b.x < W && b.y > 0 && b.y < H);
-
-  for (const z of zombies) {
-    // 마을 쪽으로 이동, 플레이어가 가까우면 플레이어 추격
-    const dp = Math.hypot(p.x - z.x, p.y - z.y);
-    const tx = dp < 150 ? p.x : TOWN.x, ty = dp < 150 ? p.y : TOWN.y;
-    const a = Math.atan2(ty - z.y, tx - z.x);
-    z.x += Math.cos(a) * z.speed; z.y += Math.sin(a) * z.speed;
-    if (z.hitCd > 0) z.hitCd--;
-    if (dp < z.r + 10 && z.hitCd === 0) { p.hp -= z.big ? 12 : 6; z.hitCd = 40; burst(p.x, p.y, '#c33', 5); }
-    if (Math.hypot(TOWN.x - z.x, TOWN.y - z.y) < TOWN.r + z.r && z.hitCd === 0) { town.hp -= z.big ? 6 : 3; z.hitCd = 40; burst(TOWN.x, TOWN.y, '#fa3', 4); }
-    for (const b of bullets) {
-      if (b.life > 0 && Math.hypot(b.x - z.x, b.y - z.y) < z.r) {
-        z.hp--; b.life = 0; burst(z.x, z.y, '#7a2', 3);
-        if (z.hp <= 0) {
-          score += z.big ? 30 : 10; burst(z.x, z.y, '#5a1', 10);
-          const r = Math.random();
-          if (r < 0.12) pickups.push({x: z.x, y: z.y, type: 'heal'});
-          else if (r < 0.2) pickups.push({x: z.x, y: z.y, type: 'repair'});
-          else if (r < 0.26) pickups.push({x: z.x, y: z.y, type: 'shotgun'});
-        }
+  // 존 처리
+  for (const z of zones) {
+    if (z.cd > 0) z.cd -= dt;
+    if (z.hpMax && z.level > 0 && z.hp <= 0) { z.level = 0; z.progress = 0; fx.push({boom: 1, x: z.x, y: z.y, life: .4}); }
+    // 병영 생산 / 타워 사격
+    if (z.kind === 'barracks' && z.level > 0) {
+      z.spawnT -= dt;
+      if (z.spawnT <= 0) { z.spawnT = 5.5 / (1 + z.level * .35); const m = 1 + (z.level - 1) * .35; for (let i = 0; i < (z.level >= 2 ? 2 : 1); i++) spawnUnit('alien', 'grunt', z.lane, m); }
+    }
+    if (z.kind === 'tower' && z.level > 0) {
+      z.t -= dt; const range = 120 + z.level * 25;
+      if (z.t <= 0) { let best = null, bd = range; for (const u of units) if (u.team === 'human') { const d = Math.hypot(u.x - z.x, u.y - z.y); if (d < bd) { bd = d; best = u; } }
+        if (!best) for (const tu of turrets) { const d = Math.hypot(tu.x - z.x, tu.y - z.y); if (tu.hp > 0 && d < bd) { bd = d; best = tu; } }
+        if (best) { hit(best, 8 + z.level * 5); beam(z, best, '#d9a8ff'); z.t = 0.55; } }
+    }
+    // 코인 투입
+    if (p.dead > 0 || Math.hypot(p.x - z.x, p.y - z.y) > 40) { z.paying = false; continue; }
+    let cost = z.cost, ready = z.cd <= 0;
+    if (z.costs) { if (z.level >= 3) { z.paying = false; continue; } cost = z.costs[z.level]; }
+    if (z.kind === 'fuse') { const near = units.filter(u => u.team === 'alien' && u.kind === 'grunt' && Math.hypot(u.x - z.x, u.y - z.y) < 230); z.near = near.length; if (near.length < 4) ready = false; z.pick = near; }
+    z.paying = ready && wallet > 0;
+    if (!ready || wallet <= 0) continue;
+    const pay = Math.min(wallet, Math.max(10, cost * 1.4) * dt, cost - z.progress);
+    wallet -= pay; z.progress += pay;
+    if (z.progress >= cost - 0.001) {
+      z.progress = 0; fx.push({boom: 1, x: z.x, y: z.y, life: .4});
+      if (z.costs) { z.level++; z.hp = z.hpMax = 200 + z.level * 80; }
+      else if (z.kind === 'wall') { const [wx, wy] = edgePoint(z.edge, z.at); walls.push({x: wx, y: wy, hp: 200, hpMax: 200, edge: z.edge, life: 25, r: 20, wall: 1}); z.cd = z.cdMax; }
+      else if (z.kind === 'poison') { const [wx, wy] = edgePoint(z.edge, z.at); poisons.push({x: wx, y: wy, r: 60, life: 16}); z.cd = z.cdMax; }
+      else if (z.kind === 'giant') { p.form = 'giant'; p.formT = 18; p.hp = p.hpMax; z.cd = z.cdMax; }
+      else if (z.kind === 'ufo') { p.form = 'ufo'; p.formT = 18; z.cd = z.cdMax; }
+      else if (z.kind === 'fuse') {
+        const g = z.pick.slice(0, 4); let x = 0, y = 0; g.forEach(u => { x += u.x; y += u.y; u.hp = 0; u.silent = 1; });
+        spawnUnit('alien', 'fusion', 'A'); const f = units[units.length - 1]; f.x = x / g.length; f.y = y / g.length; f.at = nearestNode(f.x, f.y); f.next = nextHop(f.at, 'H', f);
+        z.cd = z.cdMax;
       }
     }
   }
-  zombies = zombies.filter(z => z.hp > 0);
 
-  for (const k of pickups) {
-    if (Math.hypot(k.x - p.x, k.y - p.y) < 18) {
-      if (k.type === 'heal') p.hp = Math.min(100, p.hp + 30);
-      if (k.type === 'repair') town.hp = Math.min(100, town.hp + 25);
-      if (k.type === 'shotgun') { p.weapon = 1; p.ammo = 30; setTimeout(() => p.weapon = 0, 12000); }
-      k.dead = true;
+  // 인간 스폰
+  spawnT -= dt; surgeT -= dt;
+  if (spawnT <= 0) { spawnT = Math.max(1.3, 3.4 - t / 90); spawnUnit('human', t > 70 && Math.random() < Math.min(.4, (t - 70) / 300) ? 'tank' : 'soldier', 'A', 1 + t / 400); }
+  if (surgeT <= 0) { surgeT = 40; const side = Math.random() < .5 ? 'L' : 'R'; toast = '지구군 반격 웨이브! (' + (side === 'L' ? '왼쪽' : '오른쪽') + ' 길)'; toastT = 4;
+    for (let i = 0; i < 6 + Math.floor(t / 40); i++) { spawnUnit('human', i % 4 === 3 ? 'tank' : 'soldier', 'A', 1 + t / 400); units[units.length - 1].lane = side; } }
+
+  // 인간 포탑
+  for (const tu of turrets) if (tu.hp > 0) { tu.cd -= dt; if (tu.cd <= 0) { let best = null, bd = 120; for (const u of units) if (u.team === 'alien') { const d = Math.hypot(u.x - tu.x, u.y - tu.y); if (d < bd) { bd = d; best = u; } }
+    if (p.dead <= 0 && Math.hypot(p.x - tu.x, p.y - tu.y) < bd) best = p; if (best) { hit(best, 10); beam(tu, best, '#ffb86b'); tu.cd = .8; } } }
+
+  // 유닛
+  const pois = poisons;
+  for (const u of units) {
+    u.cd -= dt; if (u.flash > 0) u.flash -= dt;
+    let slow = 1; if (u.team === 'human') for (const ps of pois) if (Math.hypot(u.x - ps.x, u.y - ps.y) < ps.r) { slow = .5; hit(u, 9 * dt); }
+    // 대상 탐색
+    let tgt = null, bd = u.range;
+    for (const e of targetsFor(u.team)) { if (e.hp <= 0) continue; const d = Math.hypot(e.x - u.x, e.y - u.y) - rad(e) * .5; if (d < bd) { bd = d; tgt = e; } }
+    if (tgt) {
+      if (u.cd <= 0) { hit(tgt, u.dmg); u.cd = TYPES[u.kind].cd; if (u.range > 30) beam(u, tgt, u.team === 'alien' ? '#9dff7a' : '#ffe27a'); else fx.push({x1: u.x, y1: u.y, x2: tgt.x, y2: tgt.y, life: .08, col: '#fff'}); }
+    } else if (u.at !== u.goal) {
+      const nx = NODE[u.next][0] + u.ox, ny = NODE[u.next][1] + u.oy, d = Math.hypot(nx - u.x, ny - u.y);
+      if (d < 6) { u.at = u.next; if (u.at !== u.goal) u.next = nextHop(u.at, u.goal, u); }
+      else { u.x += (nx - u.x) / d * u.spd * slow * dt; u.y += (ny - u.y) / d * u.spd * slow * dt; }
     }
   }
-  pickups = pickups.filter(k => !k.dead);
+  // 포탑·벽·플레이어 사망 처리
+  for (const w of walls) { w.life -= dt; if (w.flash > 0) w.flash -= dt; }
+  walls = walls.filter(w => w.hp > 0 && w.life > 0);
+  poisons.forEach(ps => ps.life -= dt); poisons = poisons.filter(ps => ps.life > 0);
+  if (p.hp <= 0 && p.dead <= 0) { p.dead = 4; p.form = 'base'; wallet = Math.floor(wallet * .75); fx.push({boom: 1, x: p.x, y: p.y, life: .4}); }
+  for (const u of units) if (u.hp <= 0 && !u.silent) { fx.push({boom: 1, x: u.x, y: u.y, life: .3}); if (u.drop) dropCoins(u.x, u.y, u.drop + Math.floor(t / 90)); }
+  units = units.filter(u => u.hp > 0);
+  for (const tu of turrets) if (tu.hp <= 0 && !tu.done) { tu.done = 1; dropCoins(tu.x, tu.y, 80); fx.push({boom: 1, x: tu.x, y: tu.y, life: .5}); }
 
-  for (const q of particles) { q.x += q.vx; q.y += q.vy; q.life--; }
-  particles = particles.filter(q => q.life > 0);
-
-  if (spawnLeft === 0 && zombies.length === 0) nextWave();
-  if (p.hp <= 0 || town.hp <= 0) {
-    state = 'over'; if (score > best) { best = score; localStorage.lasttownBest = best; }
+  // 동전
+  for (const c of coins) {
+    c.x += c.vx * dt; c.y += c.vy * dt; c.vx *= .9; c.vy *= .9; if (c.pop > 0) c.pop -= dt;
+    if (p.dead <= 0) { const mag = p.form === 'ufo' ? 150 : p.form === 'giant' ? 70 : 42, d = Math.hypot(p.x - c.x, p.y - c.y);
+      if (d < 12) { wallet += TIER_VAL[c.tier]; c.dead = 1; } else if (d < mag) { c.x += (p.x - c.x) / d * 340 * dt; c.y += (p.y - c.y) / d * 340 * dt; } }
   }
-}
+  coins = coins.filter(c => !c.dead);
+  mergeT -= dt; if (mergeT <= 0) { mergeT = .4; mergeCoins(); }
 
-function bar(x, y, w, v, color) {
-  ctx.fillStyle = '#000a'; ctx.fillRect(x, y, w, 10);
-  ctx.fillStyle = color; ctx.fillRect(x, y, w * Math.max(0, v) / 100, 10);
+  fx.forEach(f => f.life -= dt); fx = fx.filter(f => f.life > 0);
+  if (toastT > 0) toastT -= dt;
+  if (bases.human.hp <= 0) state = 'win';
+  if (bases.alien.hp <= 0) state = 'lose';
 }
-function text(s, x, y, size = 20, align = 'center', color = '#fff') {
-  ctx.fillStyle = color; ctx.font = `bold ${size}px sans-serif`; ctx.textAlign = align; ctx.fillText(s, x, y);
-}
+function nearestNode(x, y) { let b = 'A', bd = 1e9; for (const k in NODE) { const d = Math.hypot(NODE[k][0] - x, NODE[k][1] - y); if (d < bd) { bd = d; b = k; } } return b; }
 
+/* ---------- 그리기 ---------- */
+const rocks = Array.from({length: 40}, (_, i) => ({x: (i * 97 + 31) % W, y: (i * 193 + 57) % H, s: 5 + (i * 7) % 9}));
+function road() {
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  for (const [w, col] of [[54, '#8a6a46'], [44, '#d9b98a']]) { ctx.strokeStyle = col; ctx.lineWidth = w;
+    for (const [a, b] of EDGES) { ctx.beginPath(); ctx.moveTo(...NODE[a]); ctx.lineTo(...NODE[b]); ctx.stroke(); } }
+}
+function circ(x, y, r, col, line) { ctx.fillStyle = col; ctx.beginPath(); ctx.arc(x, y, r, 0, 6.283); ctx.fill(); if (line) { ctx.strokeStyle = line; ctx.lineWidth = 2; ctx.stroke(); } }
+function txt(s, x, y, size = 16, col = '#fff', align = 'center') { ctx.font = `bold ${size}px sans-serif`; ctx.textAlign = align; ctx.lineWidth = 3; ctx.strokeStyle = '#000a'; ctx.strokeText(s, x, y); ctx.fillStyle = col; ctx.fillText(s, x, y); }
+function hpbar(x, y, w, hp, max, col = '#5f5') { if (hp >= max) return; ctx.fillStyle = '#000a'; ctx.fillRect(x - w / 2, y, w, 4); ctx.fillStyle = col; ctx.fillRect(x - w / 2, y, w * Math.max(0, hp) / max, 4); }
+function drawCoin(c) {
+  const k = c.tier, s = c.pop > 0 ? 1.5 : 1;
+  if (k === 0) circ(c.x, c.y, 4, TIER_COL[0], '#b8860b');
+  else if (k === 1) { ctx.fillStyle = TIER_COL[1]; ctx.beginPath(); for (let i = 0; i < 6; i++) ctx.lineTo(c.x + Math.cos(i * 1.047) * 7 * s, c.y + Math.sin(i * 1.047) * 7 * s); ctx.fill(); ctx.strokeStyle = '#176'; ctx.lineWidth = 1.5; ctx.stroke(); }
+  else if (k === 2) { ctx.shadowColor = TIER_COL[2]; ctx.shadowBlur = 10; ctx.fillStyle = TIER_COL[2]; ctx.beginPath(); ctx.moveTo(c.x, c.y - 11 * s); ctx.lineTo(c.x + 8 * s, c.y); ctx.lineTo(c.x, c.y + 11 * s); ctx.lineTo(c.x - 8 * s, c.y); ctx.fill(); ctx.shadowBlur = 0; ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke(); }
+  else { ctx.shadowColor = TIER_COL[3]; ctx.shadowBlur = 18; circ(c.x, c.y, 13 * s, TIER_COL[3], '#fff'); ctx.shadowBlur = 0; circ(c.x - 4, c.y - 4, 4, '#fff9'); }
+}
+const ZINFO = {barracks: ['병영', '#9dff7a'], tower: ['타워', '#d9a8ff'], wall: ['봉쇄', '#7fd'], poison: ['오염', '#8f3'], giant: ['거대화', '#f96'], ufo: ['UFO', '#6cf'], fuse: ['합체', '#f7c']};
+function drawZone(z) {
+  const [name, col] = ZINFO[z.kind]; const cost = z.costs ? (z.level >= 3 ? null : z.costs[z.level]) : z.cost;
+  ctx.save(); ctx.translate(z.x, z.y);
+  ctx.fillStyle = z.paying ? '#ffffff55' : '#00000033'; ctx.fillRect(-32, -32, 64, 64);
+  ctx.strokeStyle = col; ctx.lineWidth = 2; ctx.setLineDash([7, 5]); ctx.strokeRect(-32, -32, 64, 64); ctx.setLineDash([]);
+  if (cost) { ctx.fillStyle = col + '99'; ctx.fillRect(-32, 32 - 64 * (z.progress / cost), 64, 64 * (z.progress / cost)); }
+  if (z.kind === 'tower' && z.level > 0) { ctx.fillStyle = '#777'; ctx.fillRect(-10, -18, 20, 28); ctx.fillStyle = '#a5f'; ctx.fillRect(-14, -24, 28, 8); }
+  if (z.kind === 'barracks' && z.level > 0) { ctx.fillStyle = '#3a6'; ctx.beginPath(); ctx.arc(0, 0, 18, Math.PI, 0); ctx.fill(); ctx.fillRect(-18, 0, 36, 8); }
+  ctx.restore();
+  const lv = z.costs && z.level > 0 ? ' Lv' + z.level : '';
+  txt(name + lv + (z.lane ? ({L: '·좌', R: '·우', A: '·중'})[z.lane] : ''), z.x, z.y - 38, 12, col);
+  const cdTxt = z.cd > 0 ? Math.ceil(z.cd) + 's' : null;
+  if (z.kind === 'fuse' && z.near !== undefined && Math.hypot(player.x - z.x, player.y - z.y) < 40 && z.near < 4) txt('유닛 4기 필요', z.x, z.y + 4, 11, '#fbb');
+  else if (cdTxt) txt(cdTxt, z.x, z.y + 5, 14, '#ccc');
+  else if (cost) { txt(cost, z.x - 8, z.y + 6, 16, '#ffe27a'); circ(z.x + 14, z.y + 1, 5, TIER_COL[0]); }
+  else txt('MAX', z.x, z.y + 5, 14, '#ccc');
+  if (z.hpMax && z.level > 0) hpbar(z.x, z.y + 36, 40, z.hp, z.hpMax);
+}
+function drawUnit(u) {
+  const fl = u.flash > 0;
+  if (u.team === 'alien') { circ(u.x, u.y, u.r, fl ? '#fff' : u.kind === 'fusion' ? '#9d4cff' : '#7fe04a', '#245'); circ(u.x - u.r * .3, u.y - 1, 1.8, '#000'); circ(u.x + u.r * .3, u.y - 1, 1.8, '#000'); if (u.kind === 'fusion') { circ(u.x, u.y - u.r - 3, 4, '#f7c'); } }
+  else { circ(u.x, u.y, u.r, fl ? '#fff' : u.kind === 'tank' ? '#657a4a' : '#4a78c9', '#123'); ctx.fillStyle = '#ccc'; ctx.fillRect(u.x - u.r * .6, u.y - u.r - 2, u.r * 1.2, 3); if (u.kind === 'tank') { ctx.fillStyle = '#333'; ctx.fillRect(u.x - 2, u.y - u.r - 10, 4, 10); } }
+  hpbar(u.x, u.y - u.r - 8, u.r * 2, u.hp, u.hpMax, u.team === 'alien' ? '#7f7' : '#f77');
+}
 function draw() {
-  ctx.fillStyle = '#2d4a2b'; ctx.fillRect(0, 0, W, H);
-  if (state === 'menu') {
-    text('LAST TOWN', W/2, 220, 64); text('마지막 마을을 지켜라', W/2, 270, 26);
-    text('WASD 이동 · 마우스 조준/발사 · R 재장전', W/2, 340, 18);
-    text('좀비로부터 마을과 자신을 지키세요', W/2, 370, 18);
-    text('클릭 또는 Enter로 시작', W/2, 440, 24, 'center', '#ff0');
-    text('최고 점수: ' + best, W/2, 490, 18);
-    return;
-  }
-  // 마을
-  ctx.fillStyle = '#7b5a3a'; ctx.beginPath(); ctx.arc(TOWN.x, TOWN.y, TOWN.r, 0, 6.28); ctx.fill();
-  ctx.fillStyle = '#b33'; ctx.beginPath(); ctx.moveTo(TOWN.x - 28, TOWN.y - 8); ctx.lineTo(TOWN.x, TOWN.y - 38); ctx.lineTo(TOWN.x + 28, TOWN.y - 8); ctx.fill();
-  ctx.fillStyle = '#dca'; ctx.fillRect(TOWN.x - 22, TOWN.y - 8, 44, 28);
+  ctx.fillStyle = '#2f6b3a'; ctx.fillRect(0, 0, W, H);
+  ctx.fillStyle = '#26592f'; for (const r of rocks) { ctx.beginPath(); ctx.arc(r.x, r.y, r.s, 0, 6.283); ctx.fill(); }
+  road();
+  if (state === 'menu') { overlay('ALIEN INVASION', ['외계 지휘관이 되어 지구 기지를 점령하라', '', 'WASD/방향키 또는 화면을 누른 채 이동', '점선 칸 위에 서면 코인이 투입됩니다', '', '화면을 눌러 시작']); return; }
 
-  for (const k of pickups) {
-    ctx.fillStyle = k.type === 'heal' ? '#f55' : k.type === 'repair' ? '#fa3' : '#5cf';
-    ctx.fillRect(k.x - 7, k.y - 7, 14, 14);
-    text(k.type === 'heal' ? '+' : k.type === 'repair' ? '🔧' : 'S', k.x, k.y + 5, 12, 'center', '#000');
+  for (const ps of poisons) { ctx.globalAlpha = .5; circ(ps.x, ps.y, ps.r, '#8f3'); ctx.globalAlpha = 1; }
+  zones.forEach(drawZone);
+  for (const w of walls) { ctx.fillStyle = w.flash > 0 ? '#fff' : '#7fe'; ctx.beginPath(); ctx.moveTo(w.x - 22, w.y + 12); ctx.lineTo(w.x - 10, w.y - 16); ctx.lineTo(w.x, w.y + 6); ctx.lineTo(w.x + 12, w.y - 18); ctx.lineTo(w.x + 22, w.y + 12); ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke(); hpbar(w.x, w.y + 16, 40, w.hp, w.hpMax); }
+  // 기지
+  const hb = bases.human, ab = bases.alien;
+  ctx.fillStyle = '#b8b8c8'; ctx.fillRect(hb.x - 44, hb.y - 28, 88, 56); ctx.fillStyle = '#c33'; ctx.fillRect(hb.x - 14, hb.y - 50, 28, 22); ctx.fillStyle = '#69c'; ctx.fillRect(hb.x - 30, hb.y - 14, 60, 12);
+  txt('지구 기지', hb.x, hb.y + 46, 12); hpbar(hb.x, hb.y + 50, 90, hb.hp, hb.hpMax, '#f66');
+  ctx.fillStyle = '#5a2a8a'; ctx.beginPath(); ctx.arc(ab.x, ab.y, ab.r, Math.PI, 0); ctx.fill(); ctx.fillRect(ab.x - ab.r, ab.y, ab.r * 2, 10); circ(ab.x, ab.y - 10, 8, '#c8f');
+  txt('우리 기지', ab.x, ab.y + 28, 12); hpbar(ab.x, ab.y + 32, 90, ab.hp, ab.hpMax, '#c8f');
+  for (const tu of turrets) if (tu.hp > 0) { circ(tu.x, tu.y, 15, '#888', '#333'); ctx.fillStyle = '#333'; ctx.fillRect(tu.x - 3, tu.y - 20, 6, 14); hpbar(tu.x, tu.y + 18, 36, tu.hp, tu.hpMax, '#f66'); }
+  coins.forEach(drawCoin);
+  units.forEach(drawUnit);
+  // 플레이어
+  const p = player;
+  if (p.dead <= 0) {
+    const s = p.form === 'giant' ? 2.1 : 1;
+    if (p.form === 'giant') { ctx.globalAlpha = .25; circ(p.x, p.y, 75, '#f96'); ctx.globalAlpha = 1; }
+    if (p.form === 'ufo') { ctx.fillStyle = '#0004'; ctx.beginPath(); ctx.ellipse(p.x, p.y + 22, 20, 6, 0, 0, 6.283); ctx.fill(); ctx.fillStyle = '#9cf'; ctx.beginPath(); ctx.ellipse(p.x, p.y - 4, 22, 8, 0, 0, 6.283); ctx.fill(); circ(p.x, p.y - 10, 9, '#cff', '#369'); }
+    else { circ(p.x, p.y, 11 * s, p.form === 'giant' ? '#e84' : '#b46cff', '#fff'); circ(p.x - 4 * s, p.y - 2 * s, 2.5 * s, '#000'); circ(p.x + 4 * s, p.y - 2 * s, 2.5 * s, '#000'); ctx.fillStyle = '#ffd23c'; ctx.beginPath(); ctx.moveTo(p.x - 7 * s, p.y - 9 * s); ctx.lineTo(p.x - 4 * s, p.y - 17 * s); ctx.lineTo(p.x, p.y - 10 * s); ctx.lineTo(p.x + 4 * s, p.y - 17 * s); ctx.lineTo(p.x + 7 * s, p.y - 9 * s); ctx.fill(); }
+    hpbar(p.x, p.y + 14 * (p.form === 'giant' ? 2 : 1), 34, p.hp, p.hpMax, '#c8f');
+    if (p.formT > 0) txt(Math.ceil(p.formT) + 's', p.x, p.y - 30 * (p.form === 'giant' ? 1.6 : 1), 12, '#ff8');
   }
-  for (const z of zombies) {
-    ctx.fillStyle = z.big ? '#385' : '#6a4'; ctx.beginPath(); ctx.arc(z.x, z.y, z.r, 0, 6.28); ctx.fill();
-    ctx.fillStyle = '#f00'; ctx.fillRect(z.x - 4, z.y - 3, 3, 3); ctx.fillRect(z.x + 2, z.y - 3, 3, 3);
-  }
-  ctx.fillStyle = '#ff8';
-  for (const b of bullets) ctx.fillRect(b.x - 2, b.y - 2, 4, 4);
-  for (const q of particles) { ctx.fillStyle = q.color; ctx.fillRect(q.x, q.y, 3, 3); }
-
-  const p = player, a = Math.atan2(mouse.y - p.y, mouse.x - p.x);
-  ctx.fillStyle = '#39f'; ctx.beginPath(); ctx.arc(p.x, p.y, 10, 0, 6.28); ctx.fill();
-  ctx.strokeStyle = '#ccc'; ctx.lineWidth = 4; ctx.beginPath(); ctx.moveTo(p.x, p.y);
-  ctx.lineTo(p.x + Math.cos(a) * 18, p.y + Math.sin(a) * 18); ctx.stroke();
+  for (const f of fx) { if (f.boom) { ctx.globalAlpha = f.life * 2; circ(f.x, f.y, 26 * (1 - f.life), '#ffd27a'); ctx.globalAlpha = 1; } else { ctx.strokeStyle = f.col; ctx.lineWidth = 2; ctx.beginPath(); ctx.moveTo(f.x1, f.y1); ctx.lineTo(f.x2, f.y2); ctx.stroke(); } }
 
   // HUD
-  text('플레이어', 10, 18, 12, 'left'); bar(10, 22, 150, p.hp, '#e44');
-  text('마을', 10, 50, 12, 'left'); bar(10, 54, 150, town.hp, '#fa3');
-  text(`웨이브 ${wave}`, W/2, 24, 22); text(`점수 ${score}`, W - 10, 24, 18, 'right');
-  text(p.reload > 0 ? '재장전 중...' : `탄약 ${p.ammo}/30${p.weapon ? ' (샷건)' : ''}`, W - 10, 48, 16, 'right');
-
-  if (state === 'over') {
-    ctx.fillStyle = '#000b'; ctx.fillRect(0, 0, W, H);
-    text('GAME OVER', W/2, 250, 56, 'center', '#f55');
-    text(town.hp <= 0 ? '마을이 무너졌습니다' : '당신이 쓰러졌습니다', W/2, 295, 22);
-    text(`웨이브 ${wave} · 점수 ${score} · 최고 ${best}`, W/2, 335, 20);
-    text('클릭 또는 Enter로 다시 시작', W/2, 400, 22, 'center', '#ff0');
-  }
+  ctx.fillStyle = '#000a'; ctx.fillRect(0, 0, W, 46);
+  const tier = wallet >= 1000 ? 3 : wallet >= 100 ? 2 : wallet >= 10 ? 1 : 0;
+  drawCoin({x: 24, y: 23, tier}); txt(Math.floor(wallet).toLocaleString(), 42, 30, 22, TIER_COL[tier], 'left');
+  txt(`${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`, W / 2, 30, 18);
+  txt('지구 ' + Math.max(0, Math.ceil(bases.human.hp)), W - 12, 20, 13, '#f99', 'right'); txt('우리 ' + Math.max(0, Math.ceil(bases.alien.hp)), W - 12, 38, 13, '#d9a8ff', 'right');
+  if (player.dead > 0) txt('재정비 중... ' + Math.ceil(player.dead), W / 2, H / 2, 28, '#fbb');
+  if (toastT > 0) txt(toast, W / 2, 80, 15, '#ffe27a');
+  if (state === 'win') overlay('VICTORY', ['지구 기지를 점령했습니다!', `시간 ${Math.floor(t)}초`, '', '화면을 눌러 다시 시작'], '#9f9');
+  if (state === 'lose') overlay('DEFEAT', ['우리 기지가 파괴되었습니다', `버틴 시간 ${Math.floor(t)}초`, '', '화면을 눌러 다시 시작'], '#f88');
+}
+function overlay(title, lines, col = '#fff') {
+  ctx.fillStyle = '#000b'; ctx.fillRect(0, 0, W, H); txt(title, W / 2, 330, 44, col);
+  lines.forEach((l, i) => txt(l, W / 2, 390 + i * 30, 17));
 }
 
-function loop() { if (state === 'play') update(); draw(); requestAnimationFrame(loop); }
-loop();
+let last = performance.now();
+function loop(now) { const dt = Math.min(.05, (now - last) / 1000); last = now; if (state === 'play') update(dt); draw(); requestAnimationFrame(loop); }
+init(); requestAnimationFrame(loop);
 </script>
 </body>
 </html>
