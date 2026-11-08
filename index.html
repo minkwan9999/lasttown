@@ -54,6 +54,7 @@ function init() {
     mkZone('poison', 60, 330, {cost: 30, cdMax: 30, edge: 2, at: 0.5}), mkZone('poison', 540, 330, {cost: 30, cdMax: 30, edge: 6, at: 0.5}),
     mkZone('giant', 235, 500, {cost: 40, cdMax: 10}), mkZone('ufo', 365, 500, {cost: 40, cdMax: 10}),
     mkZone('fuse', 300, 610, {cost: 40, cdMax: 2}),
+    mkZone('heal', 415, 842, {cost: 20, cdMax: 6}),
   ];
   zones.forEach(z => { if (z.kind === 'tower' || z.kind === 'barracks') z.hpMax = 200; });
 }
@@ -98,8 +99,9 @@ function spawnUnit(team, kind, lane, mult = 1) {
   if (team === 'human') u.lane = Math.random() < .5 ? 'L' : 'R';
   u.next = nextHop(from, goal, u); units.push(u);
 }
-function dropCoins(x, y, v) {
-  for (let ti = 3; ti >= 0; ti--) { const n = Math.floor(v / TIER_VAL[ti]); v -= n * TIER_VAL[ti]; for (let i = 0; i < Math.min(n, 12); i++) coins.push({x, y, vx: (Math.random() - .5) * 90, vy: (Math.random() - .5) * 90, tier: ti}); }
+const HARVEST = {x: 210, y: 825};
+function dropCoins(x, y, v, spread = 90) {
+  for (let ti = 3; ti >= 0; ti--) { const n = Math.floor(v / TIER_VAL[ti]); v -= n * TIER_VAL[ti]; for (let i = 0; i < Math.min(n, 12); i++) coins.push({x, y, vx: (Math.random() - .5) * spread, vy: (Math.random() - .5) * spread, tier: ti}); }
 }
 function mergeCoins() {
   for (let ti = 0; ti < 3; ti++) {
@@ -131,7 +133,7 @@ const rad = e => e.r || (e === player ? 10 : 16);
 function update(dt) {
   t += dt;
   // 코인 자동 수입
-  incomeT += dt; if (incomeT > 1) { incomeT = 0; wallet += 1 + Math.floor(t / 60); fx.push({fly: 1, from: bases.alien, to: player, life: .6, max: .6, tier: 0}); }
+  incomeT += dt; if (incomeT > 1) { incomeT = 0; dropCoins(HARVEST.x + (Math.random() - .5) * 20, HARVEST.y + (Math.random() - .5) * 12, 1 + Math.floor(t / 60), 8); }
 
   // 플레이어 이동
   const p = player;
@@ -172,6 +174,7 @@ function update(dt) {
     let cost = z.cost, ready = z.cd <= 0;
     if (z.costs) { if (z.level >= 3) { z.paying = false; continue; } cost = z.costs[z.level]; }
     if (z.kind === 'fuse') { const near = units.filter(u => u.team === 'alien' && u.kind === 'grunt' && Math.hypot(u.x - z.x, u.y - z.y) < 230); z.near = near.length; if (near.length < 4) ready = false; z.pick = near; }
+    if (z.kind === 'heal' && p.hp >= p.hpMax * .99) ready = false;
     z.paying = ready && wallet > 0;
     if (!ready || wallet <= 0) continue;
     const pay = Math.min(wallet, Math.max(10, cost * 1.4) * dt, cost - z.progress);
@@ -184,6 +187,11 @@ function update(dt) {
       else if (z.kind === 'poison') { const [wx, wy] = edgePoint(z.edge, z.at); poisons.push({x: wx, y: wy, r: 60, life: 16}); z.cd = z.cdMax; }
       else if (z.kind === 'giant') { p.form = 'giant'; p.formT = 18; p.hp = p.hpMax; z.cd = z.cdMax; }
       else if (z.kind === 'ufo') { p.form = 'ufo'; p.formT = 18; z.cd = z.cdMax; }
+      else if (z.kind === 'heal') {
+        p.hp = p.hpMax; z.cd = z.cdMax; bases.alien.hp = Math.min(bases.alien.hpMax, bases.alien.hp + 120);
+        for (const u of units) if (u.team === 'alien' && Math.hypot(u.x - z.x, u.y - z.y) < 190) u.hp = Math.min(u.hpMax, u.hp + u.hpMax * .6);
+        fx.push({boom: 1, x: p.x, y: p.y, life: .5});
+      }
       else if (z.kind === 'fuse') {
         const g = z.pick.slice(0, 4); let x = 0, y = 0; g.forEach(u => { x += u.x; y += u.y; u.hp = 0; u.silent = 1; });
         spawnUnit('alien', 'fusion', 'A'); const f = units[units.length - 1]; f.x = x / g.length; f.y = y / g.length; f.at = nearestNode(f.x, f.y); f.next = nextHop(f.at, 'H', f);
@@ -260,7 +268,7 @@ function drawCoin(c) {
   else if (k === 2) { ctx.shadowColor = TIER_COL[2]; ctx.shadowBlur = 10; ctx.fillStyle = TIER_COL[2]; ctx.beginPath(); ctx.moveTo(c.x, c.y - 11 * s); ctx.lineTo(c.x + 8 * s, c.y); ctx.lineTo(c.x, c.y + 11 * s); ctx.lineTo(c.x - 8 * s, c.y); ctx.fill(); ctx.shadowBlur = 0; ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke(); }
   else { ctx.shadowColor = TIER_COL[3]; ctx.shadowBlur = 18; circ(c.x, c.y, 13 * s, TIER_COL[3], '#fff'); ctx.shadowBlur = 0; circ(c.x - 4, c.y - 4, 4, '#fff9'); }
 }
-const ZINFO = {barracks: ['병영', '#9dff7a'], tower: ['타워', '#d9a8ff'], wall: ['봉쇄', '#7fd'], poison: ['오염', '#8f3'], giant: ['거대화', '#f96'], ufo: ['UFO', '#6cf'], fuse: ['합체', '#f7c']};
+const ZINFO = {barracks: ['병영', '#9dff7a'], tower: ['타워', '#d9a8ff'], wall: ['봉쇄', '#7fd'], poison: ['오염', '#8f3'], giant: ['거대화', '#f96'], ufo: ['UFO', '#6cf'], fuse: ['합체', '#f7c'], heal: ['회복', '#6f9']};
 function drawZone(z) {
   const [name, col] = ZINFO[z.kind]; const cost = z.costs ? (z.level >= 3 ? null : z.costs[z.level]) : z.cost;
   ctx.save(); ctx.translate(z.x, z.y);
@@ -273,10 +281,12 @@ function drawZone(z) {
   const lv = z.costs && z.level > 0 ? ' Lv' + z.level : '';
   txt(name + lv + (z.lane ? ({L: '·좌', R: '·우', A: '·중'})[z.lane] : ''), z.x, z.y - 38, 12, col);
   const cdTxt = z.cd > 0 ? Math.ceil(z.cd) + 's' : null;
-  if (z.kind === 'fuse' && z.near !== undefined && Math.hypot(player.x - z.x, player.y - z.y) < 40 && z.near < 4) txt('유닛 4기 필요', z.x, z.y + 4, 11, '#fbb');
+  if (z.kind === 'heal' && !cdTxt && Math.hypot(player.x - z.x, player.y - z.y) < 40 && player.hp >= player.hpMax * .99) txt('체력 가득', z.x, z.y + 4, 12, '#bfb');
+  else if (z.kind === 'fuse' && z.near !== undefined && Math.hypot(player.x - z.x, player.y - z.y) < 40 && z.near < 4) txt('유닛 4기 필요', z.x, z.y + 4, 11, '#fbb');
   else if (cdTxt) txt(cdTxt, z.x, z.y + 5, 14, '#ccc');
   else if (cost) { txt(cost, z.x - 8, z.y + 6, 16, '#ffe27a'); circ(z.x + 14, z.y + 1, 5, TIER_COL[0]); }
   else txt('MAX', z.x, z.y + 5, 14, '#ccc');
+  if (z.kind === 'heal') { ctx.fillStyle = '#6f9'; ctx.fillRect(z.x - 3, z.y - 17, 6, 14); ctx.fillRect(z.x - 7, z.y - 13, 14, 6); }
   if (z.hpMax && z.level > 0) hpbar(z.x, z.y + 36, 40, z.hp, z.hpMax);
 }
 function drawUnit(u) {
@@ -335,6 +345,7 @@ function draw() {
   if (state === 'menu') { overlay('ALIEN INVASION', ['외계 지휘관이 되어 지구 기지를 점령하라', '', 'WASD/방향키 또는 화면을 누른 채 이동', '점선 칸 위에 서면 코인이 투입됩니다', '', '화면을 눌러 시작']); return; }
 
   for (const ps of poisons) { ctx.globalAlpha = .5; circ(ps.x, ps.y, ps.r, '#8f3'); ctx.globalAlpha = 1; }
+  ctx.strokeStyle = '#ffe27a'; ctx.lineWidth = 2; ctx.setLineDash([5, 4]); ctx.beginPath(); ctx.arc(HARVEST.x, HARVEST.y, 24, 0, 6.283); ctx.stroke(); ctx.setLineDash([]); txt('수확', HARVEST.x, HARVEST.y + 40, 11, '#ffe27a');
   zones.forEach(drawZone);
   for (const w of walls) { ctx.fillStyle = w.flash > 0 ? '#fff' : '#7fe'; ctx.beginPath(); ctx.moveTo(w.x - 22, w.y + 12); ctx.lineTo(w.x - 10, w.y - 16); ctx.lineTo(w.x, w.y + 6); ctx.lineTo(w.x + 12, w.y - 18); ctx.lineTo(w.x + 22, w.y + 12); ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke(); hpbar(w.x, w.y + 16, 40, w.hp, w.hpMax); }
   // 기지
