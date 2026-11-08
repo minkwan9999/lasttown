@@ -212,6 +212,10 @@ function update(dt) {
   if (surgeT <= 0) { surgeT = 55; const side = Math.random() < .5 ? 'L' : 'R'; toast = '지구군 반격 웨이브! (' + (side === 'L' ? '왼쪽' : '오른쪽') + ' 길)'; toastT = 4;
     for (let i = 0; i < 5 + Math.floor(t / 60); i++) { spawnUnit('human', i % 4 === 3 ? 'tank' : 'soldier', 'A', 1 + t / 600); units[units.length - 1].lane = side; } }
 
+  // 우리 기지 자체 방어
+  { const ab = bases.alien; ab.cd = (ab.cd || 0) - dt;
+    if (ab.cd <= 0) { let best = null, bd = 130; for (const u of units) if (u.team === 'human') { const d = Math.hypot(u.x - ab.x, u.y - ab.y); if (d < bd) { bd = d; best = u; } }
+      if (best) { hit(best, 9); beam({x: ab.x, y: ab.y - 20}, best, '#d9a8ff'); ab.cd = .5; } } }
   // 인간 포탑
   for (const tu of turrets) if (tu.hp > 0) { tu.cd -= dt; if (tu.cd <= 0) { let best = null, bd = 120; for (const u of units) if (u.team === 'alien') { const d = Math.hypot(u.x - tu.x, u.y - tu.y); if (d < bd) { bd = d; best = u; } }
     if (p.dead <= 0 && Math.hypot(p.x - tu.x, p.y - tu.y) < bd) best = p; if (best) { hit(best, 7); beam(tu, best, '#ffb86b'); tu.cd = .8; } } }
