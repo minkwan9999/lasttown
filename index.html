@@ -29,8 +29,15 @@ cv.addEventListener('touchmove', e => { setPtr(e); e.preventDefault(); }, {passi
 cv.addEventListener('touchend', () => ptr.down = false);
 
 /* ---------- 맵(길 그래프) ---------- */
-const NODE = {A: [300, 800], L1: [120, 680], L2: [120, 450], L3: [120, 230], R1: [480, 680], R2: [480, 450], R3: [480, 230], X: [300, 450], H: [300, 100]};
-const EDGES = [['A','L1','L'],['L1','L2','L'],['L2','L3','L'],['L3','H','L'],['A','R1','R'],['R1','R2','R'],['R2','R3','R'],['R3','H','R'],['L2','X','C'],['X','R2','C']];
+const MW = 600, MH = 1800; // 월드 크기(화면은 카메라로 일부만 보임)
+const NODE = {A: [300, 1700], H: [300, 100], X1: [300, 1300], X2: [300, 800]};
+[[1, 1560], [2, 1300], [3, 1180], [4, 1060], [5, 800], [6, 560], [7, 300]].forEach(([n, y], i) => {
+  const x = n === 3 ? 230 : 110; NODE['L' + n] = [x, y]; NODE['R' + n] = [MW - x, y];
+});
+const EDGES = [];
+for (const L of ['L', 'R']) { const seq = ['A', L + 1, L + 2, L + 3, L + 4, L + 5, L + 6, L + 7, 'H']; for (let k = 0; k < seq.length - 1; k++) EDGES.push([seq[k], seq[k + 1], L]); }
+EDGES.push(['L2', 'X1', 'C'], ['X1', 'R2', 'C'], ['L5', 'X2', 'C'], ['X2', 'R5', 'C']);
+const EI = (a, b) => EDGES.findIndex(e => (e[0] === a && e[1] === b) || (e[0] === b && e[1] === a));
 const ADJ = {}; EDGES.forEach((e, i) => { (ADJ[e[0]] ||= []).push([e[1], i]); (ADJ[e[1]] ||= []).push([e[0], i]); });
 const elen = i => Math.hypot(NODE[EDGES[i][0]][0] - NODE[EDGES[i][1]][0], NODE[EDGES[i][0]][1] - NODE[EDGES[i][1]][1]);
 function edgePoint(i, t) { const a = NODE[EDGES[i][0]], b = NODE[EDGES[i][1]]; return [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t]; }
@@ -44,7 +51,7 @@ const ZOOM = 2; let zoom = 1; const cam = {x: 0, y: 0};
 function updateCam(dt, snap) {
   zoom = state === 'menu' || !player ? 1 : ZOOM;
   const vw = W / zoom, vh = H / zoom;
-  const tx = player && zoom > 1 ? Math.max(0, Math.min(W - vw, player.x - vw / 2)) : 0, ty = player && zoom > 1 ? Math.max(0, Math.min(H - vh, player.y - vh / 2)) : 0;
+  const tx = player && zoom > 1 ? Math.max(0, Math.min(MW - vw, player.x - vw / 2)) : 0, ty = player && zoom > 1 ? Math.max(0, Math.min(MH - vh, player.y - vh / 2)) : MH - vh;
   const k = snap ? 1 : Math.min(1, dt * 6); cam.x += (tx - cam.x) * k; cam.y += (ty - cam.y) * k;
 }
 
@@ -53,26 +60,30 @@ let state = 'menu', t, wallet, player, units, coins, fx, walls, poisons, zones, 
 
 function mkZone(kind, x, y, extra) { return Object.assign({kind, x, y, level: 0, progress: 0, cd: 0, hp: 0, spawnT: 0, t: 0}, extra); }
 function init() {
+  const tw = [[15, 30, 55], [25, 45, 80], [35, 60, 100]];
   zones = [
-    mkZone('barracks', 170, 765, {lane: 'L', costs: [20, 40, 70]}),
-    mkZone('barracks', 300, 725, {lane: 'A', costs: [25, 45, 80]}),
-    mkZone('barracks', 430, 765, {lane: 'R', costs: [20, 40, 70]}),
-    mkZone('tower', 185, 620, {costs: [15, 30, 55]}), mkZone('tower', 415, 620, {costs: [15, 30, 55]}),
-    mkZone('tower', 185, 340, {costs: [25, 45, 80]}), mkZone('tower', 415, 340, {costs: [25, 45, 80]}),
-    mkZone('wall', 60, 540, {cost: 25, cdMax: 25, edge: 1, at: 0.5}), mkZone('wall', 540, 540, {cost: 25, cdMax: 25, edge: 5, at: 0.5}),
-    mkZone('poison', 60, 330, {cost: 30, cdMax: 30, edge: 2, at: 0.5}), mkZone('poison', 540, 330, {cost: 30, cdMax: 30, edge: 6, at: 0.5}),
-    mkZone('giant', 235, 500, {cost: 40, cdMax: 10}), mkZone('ufo', 365, 500, {cost: 40, cdMax: 10}),
-    mkZone('fuse', 300, 610, {cost: 40, cdMax: 2}),
-    mkZone('heal', 415, 842, {cost: 20, cdMax: 6}),
+    mkZone('barracks', 170, 1665, {lane: 'L', costs: [20, 40, 70]}),
+    mkZone('barracks', 300, 1625, {lane: 'A', costs: [25, 45, 80]}),
+    mkZone('barracks', 430, 1665, {lane: 'R', costs: [20, 40, 70]}),
+    mkZone('tower', 185, 1440, {costs: tw[0]}), mkZone('tower', 415, 1440, {costs: tw[0]}),
+    mkZone('tower', 185, 930, {costs: tw[1]}), mkZone('tower', 415, 930, {costs: tw[1]}),
+    mkZone('tower', 185, 430, {costs: tw[2]}), mkZone('tower', 415, 430, {costs: tw[2]}),
+    mkZone('wall', 60, 1430, {cost: 25, cdMax: 25, edge: EI('L1', 'L2'), at: 0.5}), mkZone('wall', 540, 1430, {cost: 25, cdMax: 25, edge: EI('R1', 'R2'), at: 0.5}),
+    mkZone('wall', 60, 680, {cost: 25, cdMax: 25, edge: EI('L5', 'L6'), at: 0.5}), mkZone('wall', 540, 680, {cost: 25, cdMax: 25, edge: EI('R5', 'R6'), at: 0.5}),
+    mkZone('poison', 60, 930, {cost: 30, cdMax: 30, edge: EI('L4', 'L5'), at: 0.5}), mkZone('poison', 540, 930, {cost: 30, cdMax: 30, edge: EI('R4', 'R5'), at: 0.5}),
+    mkZone('poison', 60, 430, {cost: 30, cdMax: 30, edge: EI('L6', 'L7'), at: 0.5}), mkZone('poison', 540, 430, {cost: 30, cdMax: 30, edge: EI('R6', 'R7'), at: 0.5}),
+    mkZone('giant', 235, 1235, {cost: 40, cdMax: 10}), mkZone('ufo', 365, 1235, {cost: 40, cdMax: 10}),
+    mkZone('fuse', 300, 1500, {cost: 40, cdMax: 2}),
+    mkZone('heal', 415, 1742, {cost: 20, cdMax: 6}),
   ];
   zones.forEach(z => { if (z.kind === 'tower' || z.kind === 'barracks') z.hpMax = 200; });
 }
 function start() {
-  state = 'play'; t = 0; wallet = 40; units = []; coins = []; fx = []; walls = []; poisons = [];
-  player = {x: 300, y: 680, hp: 120, hpMax: 120, form: 'base', formT: 0, dead: 0, face: 1, anim: 0, moving: false, sx: 300, sy: 690, payT: 0};
-  bases = {alien: {x: 300, y: 800, hp: 500, hpMax: 500, r: 38}, human: {x: 300, y: 100, hp: 900, hpMax: 900, r: 44}};
-  turrets = [{x: 195, y: 170, hp: 220, hpMax: 220, cd: 0}, {x: 405, y: 170, hp: 220, hpMax: 220, cd: 0}, {x: 300, y: 215, hp: 260, hpMax: 260, cd: 0}];
-  init(); spawnT = 8; surgeT = 55; toast = '지휘관을 움직여 존(점선 칸) 위에 서면 코인이 투입됩니다'; toastT = 6; mergeT = 0; incomeT = 0; updateCam(0, true);
+  state = 'play'; t = 0; wallet = 50; units = []; coins = []; fx = []; walls = []; poisons = [];
+  player = {x: 300, y: 1630, hp: 120, hpMax: 120, form: 'base', formT: 0, dead: 0, face: 1, anim: 0, moving: false, sx: 300, sy: 1640, payT: 0};
+  bases = {alien: {x: 300, y: 1700, hp: 500, hpMax: 500, r: 38}, human: {x: 300, y: 100, hp: 2200, hpMax: 2200, r: 44}};
+  turrets = [{x: 195, y: 170, hp: 220, hpMax: 220, cd: 0}, {x: 405, y: 170, hp: 220, hpMax: 220, cd: 0}, {x: 300, y: 215, hp: 260, hpMax: 260, cd: 0}, {x: 190, y: 610, hp: 220, hpMax: 220, cd: 0}, {x: 410, y: 610, hp: 220, hpMax: 220, cd: 0}, {x: 190, y: 1120, hp: 220, hpMax: 220, cd: 0}, {x: 410, y: 1120, hp: 220, hpMax: 220, cd: 0}];
+  init(); spawnT = 8; surgeT = 55; toast = '적을 처치하면 코인이 떨어집니다. 주워서 점선 칸(존)에 서면 투입됩니다'; toastT = 6; mergeT = 0; incomeT = 0; updateCam(0, true);
 }
 
 /* ---------- 길찾기 ---------- */
@@ -97,8 +108,8 @@ function nextHop(from, goal, u) {
 const TYPES = {
   grunt: {hp: 50, dmg: 7, range: 22, spd: 42, cd: 0.7, r: 7, drop: 0},
   fusion: {hp: 420, dmg: 26, range: 34, spd: 34, cd: 0.8, r: 13, drop: 0},
-  soldier: {hp: 30, dmg: 4, range: 60, spd: 38, cd: 0.8, r: 7, drop: 3},
-  tank: {hp: 140, dmg: 12, range: 90, spd: 30, cd: 1.3, r: 12, drop: 25},
+  soldier: {hp: 30, dmg: 4, range: 60, spd: 38, cd: 0.8, r: 7, drop: 6},
+  tank: {hp: 140, dmg: 12, range: 90, spd: 30, cd: 1.3, r: 12, drop: 40},
 };
 function spawnUnit(team, kind, lane, mult = 1) {
   const T = TYPES[kind], from = team === 'alien' ? 'A' : 'H', goal = team === 'alien' ? 'H' : 'A';
@@ -108,7 +119,6 @@ function spawnUnit(team, kind, lane, mult = 1) {
   if (team === 'human') u.lane = Math.random() < .5 ? 'L' : 'R';
   u.next = nextHop(from, goal, u); units.push(u);
 }
-const HARVEST = {x: 210, y: 825};
 function dropCoins(x, y, v, spread = 90) {
   for (let ti = 3; ti >= 0; ti--) { const n = Math.floor(v / TIER_VAL[ti]); v -= n * TIER_VAL[ti]; for (let i = 0; i < Math.min(n, 12); i++) coins.push({x, y, vx: (Math.random() - .5) * spread, vy: (Math.random() - .5) * spread, tier: ti}); }
 }
@@ -142,18 +152,17 @@ const rad = e => e.r || (e === player ? 10 : 16);
 function update(dt) {
   t += dt;
   // 코인 자동 수입
-  incomeT += dt; if (incomeT > 1) { incomeT = 0; dropCoins(HARVEST.x + (Math.random() - .5) * 20, HARVEST.y + (Math.random() - .5) * 12, 1 + Math.floor(t / 60), 8); }
 
   // 플레이어 이동
   const p = player;
-  if (p.dead > 0) { p.dead -= dt; if (p.dead <= 0) { p.hp = p.hpMax; p.x = 300; p.y = 700; p.form = 'base'; } }
+  if (p.dead > 0) { p.dead -= dt; if (p.dead <= 0) { p.hp = p.hpMax; p.x = 300; p.y = 1640; p.form = 'base'; } }
   else {
     let dx = (keys['d'] || keys['arrowright'] ? 1 : 0) - (keys['a'] || keys['arrowleft'] ? 1 : 0);
     let dy = (keys['s'] || keys['arrowdown'] ? 1 : 0) - (keys['w'] || keys['arrowup'] ? 1 : 0);
     if (!dx && !dy && ptr.down) { const vx = cam.x + ptr.x / zoom - p.x, vy = cam.y + ptr.y / zoom - p.y, l = Math.hypot(vx, vy); if (l > 8) { dx = vx / l; dy = vy / l; } }
     const l = Math.hypot(dx, dy) || 1;
     let sp = p.form === 'ufo' ? 230 : p.form === 'giant' ? 105 : 150;
-    p.x = Math.max(15, Math.min(W - 15, p.x + dx / l * sp * dt)); p.y = Math.max(15, Math.min(H - 15, p.y + dy / l * sp * dt));
+    p.x = Math.max(15, Math.min(MW - 15, p.x + dx / l * sp * dt)); p.y = Math.max(15, Math.min(MH - 15, p.y + dy / l * sp * dt));
     if (dx) p.face = dx > 0 ? 1 : -1;
     p.moving = !!(dx || dy); if (p.moving) p.anim += dt * 12;
     if (p.formT > 0 && (p.formT -= dt) <= 0) p.form = 'base';
@@ -176,7 +185,7 @@ function update(dt) {
     // 병영 생산 / 타워 사격
     if (z.kind === 'barracks' && z.level > 0) {
       z.spawnT -= dt;
-      if (z.spawnT <= 0) { z.spawnT = 5.5 / (1 + z.level * .35); const m = 1 + (z.level - 1) * .35; for (let i = 0; i < (z.level >= 2 ? 2 : 1); i++) spawnUnit('alien', 'grunt', z.lane, m); }
+      if (z.spawnT <= 0) { z.spawnT = 6.5 / (1 + z.level * .3); const m = 1 + (z.level - 1) * .35; for (let i = 0; i < (z.level >= 3 ? 2 : 1); i++) spawnUnit('alien', 'grunt', z.lane, m); }
     }
     if (z.kind === 'tower' && z.level > 0) {
       z.t -= dt; const range = 120 + z.level * 25;
@@ -217,9 +226,9 @@ function update(dt) {
 
   // 인간 스폰
   spawnT -= dt; surgeT -= dt;
-  if (spawnT <= 0) { spawnT = Math.max(1.8, 5.2 - t / 100); spawnUnit('human', t > 70 && Math.random() < Math.min(.4, (t - 70) / 300) ? 'tank' : 'soldier', 'A', 1 + t / 600); }
+  if (spawnT <= 0) { spawnT = Math.max(1.5, 5.2 - t / 80); spawnUnit('human', t > 70 && Math.random() < Math.min(.4, (t - 70) / 300) ? 'tank' : 'soldier', 'A', 1 + t / 500); }
   if (surgeT <= 0) { surgeT = 55; const side = Math.random() < .5 ? 'L' : 'R'; toast = '지구군 반격 웨이브! (' + (side === 'L' ? '왼쪽' : '오른쪽') + ' 길)'; toastT = 4;
-    for (let i = 0; i < 5 + Math.floor(t / 60); i++) { spawnUnit('human', i % 4 === 3 ? 'tank' : 'soldier', 'A', 1 + t / 600); units[units.length - 1].lane = side; } }
+    for (let i = 0; i < 5 + Math.floor(t / 60); i++) { spawnUnit('human', i % 4 === 3 ? 'tank' : 'soldier', 'A', 1 + t / 500); units[units.length - 1].lane = side; } }
 
   // 우리 기지 자체 방어
   { const ab = bases.alien; ab.cd = (ab.cd || 0) - dt;
@@ -271,7 +280,7 @@ function update(dt) {
 function nearestNode(x, y) { let b = 'A', bd = 1e9; for (const k in NODE) { const d = Math.hypot(NODE[k][0] - x, NODE[k][1] - y); if (d < bd) { bd = d; b = k; } } return b; }
 
 /* ---------- 그리기 ---------- */
-const rocks = Array.from({length: 40}, (_, i) => ({x: (i * 97 + 31) % W, y: (i * 193 + 57) % H, s: 5 + (i * 7) % 9}));
+const rocks = Array.from({length: 130}, (_, i) => ({x: (i * 97 + 31) % MW, y: (i * 193 + 57) % MH, s: 5 + (i * 7) % 9}));
 function road() {
   ctx.lineCap = 'round'; ctx.lineJoin = 'round';
   for (const [w, col] of [[54, '#8a6a46'], [44, '#d9b98a']]) { ctx.strokeStyle = col; ctx.lineWidth = w;
@@ -361,7 +370,7 @@ function drawStack(p, s) {
   if (w >= 10) txt(w.toLocaleString(), bx, top - 8 * sc, 11 * sc, TIER_COL[w >= 1000 ? 3 : w >= 100 ? 2 : 1]);
 }
 function drawMinimap() {
-  const mw = 70, mh = 105, mx = W - mw - 8, my = 54, k = mw / W;
+  const mw = 50, mh = 150, mx = W - mw - 8, my = 54, k = mw / MW;
   ctx.fillStyle = '#000b'; ctx.fillRect(mx - 2, my - 2, mw + 4, mh + 4); ctx.fillStyle = '#2f6b3a'; ctx.fillRect(mx, my, mw, mh);
   ctx.strokeStyle = '#d9b98a'; ctx.lineWidth = 2; ctx.beginPath();
   for (const [a, b] of EDGES) { ctx.moveTo(mx + NODE[a][0] * k, my + NODE[a][1] * k); ctx.lineTo(mx + NODE[b][0] * k, my + NODE[b][1] * k); } ctx.stroke();
@@ -380,7 +389,6 @@ function draw() {
   if (state === 'menu') { ctx.restore(); overlay('ALIEN INVASION', ['외계 지휘관이 되어 지구 기지를 점령하라', '', 'WASD/방향키 또는 화면을 누른 채 이동', '점선 칸 위에 서면 코인이 투입됩니다', '', '화면을 눌러 시작']); return; }
 
   for (const ps of poisons) { ctx.globalAlpha = .5; circ(ps.x, ps.y, ps.r, '#8f3'); ctx.globalAlpha = 1; }
-  ctx.strokeStyle = '#ffe27a'; ctx.lineWidth = 2; ctx.setLineDash([5, 4]); ctx.beginPath(); ctx.arc(HARVEST.x, HARVEST.y, 24, 0, 6.283); ctx.stroke(); ctx.setLineDash([]); txt('수확', HARVEST.x, HARVEST.y + 40, 11, '#ffe27a');
   zones.forEach(drawZone);
   for (const w of walls) { ctx.fillStyle = w.flash > 0 ? '#fff' : '#7fe'; ctx.beginPath(); ctx.moveTo(w.x - 22, w.y + 12); ctx.lineTo(w.x - 10, w.y - 16); ctx.lineTo(w.x, w.y + 6); ctx.lineTo(w.x + 12, w.y - 18); ctx.lineTo(w.x + 22, w.y + 12); ctx.fill(); ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke(); hpbar(w.x, w.y + 16, 40, w.hp, w.hpMax); }
   // 기지
