@@ -80,7 +80,7 @@ function init() {
 }
 function start() {
   state = 'play'; t = 0; wallet = 50; units = []; coins = []; fx = []; walls = []; poisons = [];
-  player = {x: 300, y: 1630, hp: 120, hpMax: 120, form: 'base', formT: 0, dead: 0, face: 1, anim: 0, moving: false, sx: 300, sy: 1640, payT: 0};
+  player = {x: 300, y: 1630, hp: 120, hpMax: 120, form: 'base', formT: 0, dead: 0, face: 1, lvl: 1, xp: 0, tier: 0, dr: 1, anim: 0, moving: false, sx: 300, sy: 1640, payT: 0};
   bases = {alien: {x: 300, y: 1700, hp: 500, hpMax: 500, r: 38}, human: {x: 300, y: 100, hp: 2200, hpMax: 2200, r: 44}};
   turrets = [{x: 195, y: 170, hp: 220, hpMax: 220, cd: 0}, {x: 405, y: 170, hp: 220, hpMax: 220, cd: 0}, {x: 300, y: 215, hp: 260, hpMax: 260, cd: 0}, {x: 190, y: 610, hp: 220, hpMax: 220, cd: 0}, {x: 410, y: 610, hp: 220, hpMax: 220, cd: 0}, {x: 190, y: 1120, hp: 220, hpMax: 220, cd: 0}, {x: 410, y: 1120, hp: 220, hpMax: 220, cd: 0}];
   init(); spawnT = 8; surgeT = 55; toast = '적을 처치하면 코인이 떨어집니다. 주워서 점선 칸(존)에 서면 투입됩니다'; toastT = 6; mergeT = 0; incomeT = 0; updateCam(0, true);
@@ -134,7 +134,27 @@ function mergeCoins() {
   coins = coins.filter(c => !c.dead);
 }
 
-function hit(e, dmg) { e.hp -= dmg; e.flash = 0.1; }
+function hit(e, dmg) { if (e === player) dmg *= player.dr; e.hp -= dmg; e.flash = 0.1; }
+/* 경험치·레벨: 5레벨마다 변신(진화) */
+const MAXLV = 20, TIER_NAME = ['외계 지휘관', '외계 전사', '외계 기사', '외계 군주', '외계 황제'];
+const xpNeed = lv => 40 + 25 * (lv - 1);
+function gainXP(n, x, y) {
+  const p = player; if (p.lvl >= MAXLV) return;
+  if (p.dead <= 0 && Math.hypot(p.x - x, p.y - y) < 220) n *= 1.5; // 지휘관 근처에서 잡으면 보너스
+  p.xp += n;
+  while (p.lvl < MAXLV && p.xp >= xpNeed(p.lvl)) { p.xp -= xpNeed(p.lvl); p.lvl++; levelUp(); }
+  if (p.lvl >= MAXLV) p.xp = 0;
+}
+function levelUp() {
+  const p = player, newTier = Math.floor(p.lvl / 5);
+  p.hpMax = 120 + 10 * (p.lvl - 1); p.hp = p.hpMax;
+  fx.push({boom: 1, x: p.x, y: p.y, life: .5});
+  if (newTier > p.tier) {
+    p.tier = newTier; p.dr = [1, 1, .75, .75, .6][newTier];
+    for (let i = 0; i < 4; i++) fx.push({boom: 1, x: p.x + (Math.random() - .5) * 50, y: p.y + (Math.random() - .5) * 50, life: .5 + i * .1});
+    toast = `변신! Lv ${p.lvl} ${TIER_NAME[newTier]}`; toastT = 5;
+  } else { toast = `레벨 업! Lv ${p.lvl}`; toastT = 2; }
+}
 function beam(a, b, col) { fx.push({x1: a.x, y1: a.y, x2: b.x, y2: b.y, life: 0.12, col}); }
 function targetsFor(team) {
   const res = [];
@@ -168,9 +188,14 @@ function update(dt) {
     if (p.formT > 0 && (p.formT -= dt) <= 0) p.form = 'base';
     p.atkT = (p.atkT || 0) - dt;
     if (p.form !== 'giant' && p.atkT <= 0) {
-      let best = null, bd = p.form === 'ufo' ? 140 : 115;
-      for (const e of targetsFor('alien')) { if (e.hp <= 0) continue; const d = Math.hypot(e.x - p.x, e.y - p.y) - rad(e) * .5; if (d < bd) { bd = d; best = e; } }
-      if (best) { hit(best, p.form === 'ufo' ? 11 : 8); beam(p, best, '#e6a8ff'); p.atkT = .45; }
+      const range = (p.form === 'ufo' ? 140 : 115) + [0, 20, 20, 30, 40][p.tier], cand = [];
+      for (const e of targetsFor('alien')) { if (e.hp <= 0) continue; const d = Math.hypot(e.x - p.x, e.y - p.y) - rad(e) * .5; if (d < range) cand.push([d, e]); }
+      if (cand.length) {
+        cand.sort((a, b) => a[0] - b[0]);
+        const dmg = ((p.form === 'ufo' ? 11 : 8) + 1.2 * (p.lvl - 1)) * (p.tier >= 4 ? 1.5 : 1);
+        for (const [, e] of cand.slice(0, [1, 2, 2, 2, 3][p.tier])) { hit(e, dmg); beam(p, e, '#e6a8ff'); }
+        p.atkT = .45;
+      }
     }
     if (p.form === 'giant') for (const e of targetsFor('alien')) if (Math.hypot(e.x - p.x, e.y - p.y) < 75 + rad(e)) hit(e, 55 * dt);
   }
@@ -247,7 +272,7 @@ function update(dt) {
     let tgt = null, bd = u.range;
     for (const e of targetsFor(u.team)) { if (e.hp <= 0) continue; const d = Math.hypot(e.x - u.x, e.y - u.y) - rad(e) * .5; if (d < bd) { bd = d; tgt = e; } }
     if (tgt) {
-      if (u.cd <= 0) { hit(tgt, u.dmg); u.cd = TYPES[u.kind].cd; if (u.range > 30) beam(u, tgt, u.team === 'alien' ? '#9dff7a' : '#ffe27a'); else fx.push({x1: u.x, y1: u.y, x2: tgt.x, y2: tgt.y, life: .08, col: '#fff'}); }
+      if (u.cd <= 0) { hit(tgt, u.dmg * (u.team === 'alien' && player.tier >= 3 && player.dead <= 0 && Math.hypot(player.x - u.x, player.y - u.y) < 170 ? 1.25 : 1)); u.cd = TYPES[u.kind].cd; if (u.range > 30) beam(u, tgt, u.team === 'alien' ? '#9dff7a' : '#ffe27a'); else fx.push({x1: u.x, y1: u.y, x2: tgt.x, y2: tgt.y, life: .08, col: '#fff'}); }
     } else if (u.at !== u.goal) {
       const nx = NODE[u.next][0] + u.ox, ny = NODE[u.next][1] + u.oy, d = Math.hypot(nx - u.x, ny - u.y);
       if (d < 6) { u.at = u.next; if (u.at !== u.goal) u.next = nextHop(u.at, u.goal, u); }
@@ -259,9 +284,9 @@ function update(dt) {
   walls = walls.filter(w => w.hp > 0 && w.life > 0);
   poisons.forEach(ps => ps.life -= dt); poisons = poisons.filter(ps => ps.life > 0);
   if (p.hp <= 0 && p.dead <= 0) { p.dead = 4; p.form = 'base'; wallet = Math.floor(wallet * .75); fx.push({boom: 1, x: p.x, y: p.y, life: .4}); }
-  for (const u of units) if (u.hp <= 0 && !u.silent) { fx.push({boom: 1, x: u.x, y: u.y, life: .3}); if (u.drop) dropCoins(u.x, u.y, u.drop + Math.floor(t / 90)); }
+  for (const u of units) if (u.hp <= 0 && !u.silent) { fx.push({boom: 1, x: u.x, y: u.y, life: .3}); if (u.drop) dropCoins(u.x, u.y, u.drop + Math.floor(t / 90)); if (u.team === 'human') gainXP(u.kind === 'tank' ? 35 : 12, u.x, u.y); }
   units = units.filter(u => u.hp > 0);
-  for (const tu of turrets) if (tu.hp <= 0 && !tu.done) { tu.done = 1; dropCoins(tu.x, tu.y, 80); fx.push({boom: 1, x: tu.x, y: tu.y, life: .5}); }
+  for (const tu of turrets) if (tu.hp <= 0 && !tu.done) { tu.done = 1; dropCoins(tu.x, tu.y, 80); gainXP(90, tu.x, tu.y); fx.push({boom: 1, x: tu.x, y: tu.y, life: .5}); }
 
   // 동전
   for (const c of coins) {
@@ -329,16 +354,19 @@ function drawUnit(u) {
 /* 사람 모양 외계 지휘관 */
 function drawCommander(p, s) {
   const x = p.x, y = p.y, f = p.face, sw = p.moving ? Math.sin(p.anim) : 0, bob = p.moving ? Math.abs(Math.cos(p.anim)) * 2 * s : 0, giant = p.form === 'giant';
-  const armor = giant ? '#e8742a' : '#8a4bd6', skin = '#8be04a';
+  const tr = p.tier, armor = giant ? '#e8742a' : ['#8a4bd6', '#2f8fe0', '#d4a017', '#d83a6b', '#ff5a1f'][tr], skin = '#8be04a';
+  if (tr >= 3) { ctx.globalAlpha = .22 + .06 * Math.sin(p.anim * .3 + t * 4); ctx.fillStyle = tr >= 4 ? '#ff7a2a' : '#ff6fb0'; ctx.beginPath(); ctx.arc(x, y - 2 * s, 26 * s, 0, 6.283); ctx.fill(); ctx.globalAlpha = 1; }
+  if (tr >= 2) { ctx.fillStyle = tr >= 4 ? '#ff9a3a' : '#cde'; for (const d of [-1, 1]) { ctx.beginPath(); ctx.moveTo(x + d * 4 * s, y - 7 * s); ctx.lineTo(x + d * 22 * s, y - 18 * s - Math.sin(t * 6) * 2 * s); ctx.lineTo(x + d * 17 * s, y + 2 * s); ctx.lineTo(x + d * 4 * s, y + 3 * s); ctx.fill(); } }
   ctx.fillStyle = '#0005'; ctx.beginPath(); ctx.ellipse(x, y + 17 * s, 11 * s, 4 * s, 0, 0, 6.283); ctx.fill();
   // 망토
-  ctx.fillStyle = giant ? '#a33' : '#5a2a9a'; ctx.beginPath(); ctx.moveTo(x - f * 4 * s, y - 8 * s - bob); ctx.lineTo(x - f * (15 + sw * 3) * s, y + 14 * s); ctx.lineTo(x - f * 2 * s, y + 10 * s); ctx.fill();
+  ctx.fillStyle = giant ? '#a33' : ['#5a2a9a', '#1c5a9a', '#7a3a1a', '#7a1a3a', '#b02a10'][tr]; ctx.beginPath(); ctx.moveTo(x - f * 4 * s, y - 8 * s - bob); ctx.lineTo(x - f * (15 + sw * 3) * s, y + 14 * s); ctx.lineTo(x - f * 2 * s, y + 10 * s); ctx.fill();
   // 다리
   ctx.lineCap = 'round'; ctx.strokeStyle = '#2c2a55'; ctx.lineWidth = 4 * s;
   for (const d of [-1, 1]) { ctx.beginPath(); ctx.moveTo(x + d * 3 * s, y + 6 * s - bob); ctx.lineTo(x + d * 3 * s + d * sw * 5 * s, y + 16 * s); ctx.stroke(); }
   // 몸통
   ctx.fillStyle = armor; ctx.strokeStyle = '#2a1850'; ctx.lineWidth = 1.5 * s; ctx.fillRect(x - 7 * s, y - 8 * s - bob, 14 * s, 15 * s); ctx.strokeRect(x - 7 * s, y - 8 * s - bob, 14 * s, 15 * s);
   ctx.fillStyle = '#ffd23c'; ctx.fillRect(x - 7 * s, y + 3 * s - bob, 14 * s, 2.5 * s); ctx.fillRect(x - 2 * s, y - 6 * s - bob, 4 * s, 4 * s);
+  if (tr >= 1) { ctx.fillStyle = '#e8e8f0'; for (const d of [-1, 1]) { ctx.beginPath(); ctx.arc(x + d * 8 * s, y - 7 * s - bob, 3.4 * s, 0, 6.283); ctx.fill(); } }
   // 팔
   ctx.strokeStyle = skin; ctx.lineWidth = 3.2 * s;
   for (const d of [-1, 1]) { ctx.beginPath(); ctx.moveTo(x + d * 7.5 * s, y - 6 * s - bob); ctx.lineTo(x + d * 10 * s - d * sw * 3 * s, y + 4 * s - bob + d * sw * 2 * s); ctx.stroke(); }
@@ -351,11 +379,12 @@ function drawCommander(p, s) {
   // 왕관
   ctx.fillStyle = '#ffd23c'; ctx.strokeStyle = '#a77a00'; ctx.lineWidth = 1 * s; ctx.beginPath();
   ctx.moveTo(x - 6 * s, hy - 7 * s); ctx.lineTo(x - 7 * s, hy - 14 * s); ctx.lineTo(x - 3 * s, hy - 10 * s); ctx.lineTo(x, hy - 16 * s); ctx.lineTo(x + 3 * s, hy - 10 * s); ctx.lineTo(x + 7 * s, hy - 14 * s); ctx.lineTo(x + 6 * s, hy - 7 * s); ctx.closePath(); ctx.fill(); ctx.stroke();
+  if (tr >= 3) { ctx.fillStyle = tr >= 4 ? '#ff3a2a' : '#4cf'; ctx.beginPath(); ctx.arc(x, hy - 12 * s, 2.2 * s, 0, 6.283); ctx.fill(); }
 }
 /* 보유 코인이 단위별 더미로 쌓여 보임: 1의 자리, 10의 자리, 100의 자리, 1000의 자리 */
 function drawStack(p, s) {
   const w = Math.floor(wallet), cnt = [w % 10, Math.floor(w / 10) % 10, Math.floor(w / 100) % 10, Math.min(9, Math.floor(w / 1000))];
-  const bx = p.sx, by = p.sy + 16 * s, sway = p.moving ? Math.sin(p.anim) : 0, sc = s > 1 ? 1.4 : 1;
+  const bx = p.sx, by = p.sy + 16 * s, sway = p.moving ? Math.sin(p.anim) : 0, sc = s > 1.6 ? 1.4 : 1;
   let top = by;
   for (let i = 0; i < 4; i++) {
     const cx = bx + (i - 1.5) * 12 * sc, th = (i === 3 ? 5 : 4) * sc, rx = (4.5 + i * .7) * sc;
@@ -370,7 +399,7 @@ function drawStack(p, s) {
   if (w >= 10) txt(w.toLocaleString(), bx, top - 8 * sc, 11 * sc, TIER_COL[w >= 1000 ? 3 : w >= 100 ? 2 : 1]);
 }
 function drawMinimap() {
-  const mw = 50, mh = 150, mx = W - mw - 8, my = 54, k = mw / MW;
+  const mw = 50, mh = 150, mx = W - mw - 8, my = 68, k = mw / MW;
   ctx.fillStyle = '#000b'; ctx.fillRect(mx - 2, my - 2, mw + 4, mh + 4); ctx.fillStyle = '#2f6b3a'; ctx.fillRect(mx, my, mw, mh);
   ctx.strokeStyle = '#d9b98a'; ctx.lineWidth = 2; ctx.beginPath();
   for (const [a, b] of EDGES) { ctx.moveTo(mx + NODE[a][0] * k, my + NODE[a][1] * k); ctx.lineTo(mx + NODE[b][0] * k, my + NODE[b][1] * k); } ctx.stroke();
@@ -403,7 +432,7 @@ function draw() {
   // 플레이어
   const p = player;
   if (p.dead <= 0) {
-    const s = p.form === 'giant' ? 2.1 : 1;
+    const s = (1 + .08 * p.tier) * (p.form === 'giant' ? 2.1 : 1);
     if (p.form === 'giant') { ctx.globalAlpha = .25; circ(p.x, p.y, 75, '#f96'); ctx.globalAlpha = 1; }
     if (p.form === 'ufo') { ctx.fillStyle = '#0004'; ctx.beginPath(); ctx.ellipse(p.x, p.y + 22, 20, 6, 0, 0, 6.283); ctx.fill(); ctx.fillStyle = '#9cf'; ctx.beginPath(); ctx.ellipse(p.x, p.y - 4, 22, 8, 0, 0, 6.283); ctx.fill(); circ(p.x, p.y - 10, 9, '#cff', '#369'); }
     else { drawStack(p, s); drawCommander(p, s); }
@@ -416,8 +445,13 @@ function draw() {
   ctx.restore();
   drawMinimap();
   // HUD
-  ctx.fillStyle = '#000a'; ctx.fillRect(0, 0, W, 46);
+  ctx.fillStyle = '#000a'; ctx.fillRect(0, 0, W, 62);
   const tier = wallet >= 1000 ? 3 : wallet >= 100 ? 2 : wallet >= 10 ? 1 : 0;
+  { const p = player, need = xpNeed(p.lvl), fr = p.lvl >= MAXLV ? 1 : p.xp / need;
+    txt(`Lv ${p.lvl} ${TIER_NAME[p.tier]}`, 10, 57, 12, ['#fff', '#7cf', '#fd6', '#f9c', '#fa6'][p.tier], 'left');
+    ctx.fillStyle = '#000a'; ctx.fillRect(150, 50, 110, 7); ctx.fillStyle = '#9f6'; ctx.fillRect(150, 50, 110 * fr, 7);
+    if (p.lvl < MAXLV) txt(`${Math.floor(p.xp)}/${need}`, 266, 57, 10, '#cfc', 'left'); else txt('MAX', 266, 57, 10, '#fd6', 'left');
+    const nt = 5 - p.lvl % 5; if (p.lvl < MAXLV) txt(`변신까지 ${nt}레벨`, W / 2 + 40, 57, 10, '#ccc', 'left'); }
   drawCoin({x: 24, y: 23, tier}); txt(Math.floor(wallet).toLocaleString(), 42, 30, 22, TIER_COL[tier], 'left');
   txt(`${Math.floor(t / 60)}:${String(Math.floor(t % 60)).padStart(2, '0')}`, W / 2, 30, 18);
   txt('지구 ' + Math.max(0, Math.ceil(bases.human.hp)), W - 12, 20, 13, '#f99', 'right'); txt('우리 ' + Math.max(0, Math.ceil(bases.alien.hp)), W - 12, 38, 13, '#d9a8ff', 'right');
