@@ -1,0 +1,7 @@
+{
+  "name": "LastTown.Core",
+  "rootNamespace": "LastTown.Core",
+  "references": [],
+  "autoReferenced": true,
+  "noEngineReferences": true
+}
